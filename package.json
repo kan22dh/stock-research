@@ -9,6 +9,7 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.91.1",
     "@prisma/client": "^6.19.3",
     "dotenv": "^17.4.2",
     "lightweight-charts": "^5.2.0",

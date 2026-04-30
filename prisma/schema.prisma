@@ -26,6 +26,8 @@ model ListedStock {
 
   prices     PriceCache[]
   watchItems Watchlist[]
+  financials FinancialCache[]
+  history    BrowseHistory[]
 
   @@index([ticker])
   @@index([name])
@@ -56,9 +58,44 @@ model Watchlist {
   stock ListedStock @relation(fields: [code], references: [code], onDelete: Cascade)
 }
 
+// Browsing history - last viewed stocks
+model BrowseHistory {
+  code       String   @id
+  lastViewed DateTime @default(now())
+
+  stock ListedStock @relation(fields: [code], references: [code], onDelete: Cascade)
+
+  @@index([lastViewed])
+}
+
+// Annual financial cache (for screening; 1 row per code+fiscal-year-end)
+model FinancialCache {
+  code              String
+  fiscalYearEnd     String   // "YYYY-MM-DD"
+  netSales          Float?
+  operatingProfit   Float?
+  ordinaryProfit    Float?
+  netIncome         Float?
+  eps               Float?
+  totalAssets       Float?
+  equity            Float?
+  equityRatio       Float?
+  bookValuePerShare Float?
+  dividend          Float?
+  // Convenience: pre-computed YoY (vs previous FY in same code), null when no prior
+  salesYoY          Float?   // % e.g. 12.5
+  profitYoY         Float?
+  updatedAt         DateTime @updatedAt
+
+  stock ListedStock @relation(fields: [code], references: [code], onDelete: Cascade)
+
+  @@id([code, fiscalYearEnd])
+  @@index([code])
+}
+
 // Sync log to know last fetch times
 model SyncLog {
-  key       String   @id // "listed_info" | "prices:{code}" | "id_token"
-  payload   String?  // JSON or token value
+  key       String   @id // "listed_info" | "prices:{code}" | "financials:{code}" | "id_token"
+  payload   String?
   syncedAt  DateTime @updatedAt
 }

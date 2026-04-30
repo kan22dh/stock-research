@@ -1,9 +1,11 @@
 import { prisma } from "./db";
-import { listedInfo, dailyQuotes } from "./jquants";
+import { listedInfo, dailyQuotes, statements } from "./jquants";
 import { toShortCode } from "./stock-codes";
+import { extractAnnualSummaries } from "./financial-metrics";
 
-const LISTED_INFO_TTL_MS = 24 * 60 * 60 * 1000; // sync once per day
+const LISTED_INFO_TTL_MS = 24 * 60 * 60 * 1000;
 const PRICES_TTL_MS = 6 * 60 * 60 * 1000;
+const FINANCIALS_TTL_MS = 24 * 60 * 60 * 1000;
 
 export async function syncListedInfoIfStale(): Promise<{ count: number; refreshed: boolean }> {
   const log = await prisma.syncLog.findUnique({ where: { key: "listed_info" } });
@@ -14,7 +16,6 @@ export async function syncListedInfoIfStale(): Promise<{ count: number; refreshe
 
   const list = await listedInfo();
 
-  // Bulk upsert via transaction (sqlite handles modest sizes fine; ~4000 rows expected)
   await prisma.$transaction(
     list.map((row) =>
       prisma.listedStock.upsert({
@@ -66,17 +67,17 @@ export async function syncPricesIfStale(code: string): Promise<{ count: number; 
     if (count > 0) return { count, refreshed: false };
   }
 
-  // Free plan: 12 weeks delay, max 12 months window
-  // Pull a wide window (1 year) and let API return what it has
+  // Free plan covers a window ending ~12 weeks (84 days) before today.
+  const FREE_PLAN_DELAY_DAYS = 90;
   const to = new Date();
-  const from = new Date();
+  to.setDate(to.getDate() - FREE_PLAN_DELAY_DAYS);
+  const from = new Date(to);
   from.setFullYear(from.getFullYear() - 1);
   const fromStr = from.toISOString().slice(0, 10);
   const toStr = to.toISOString().slice(0, 10);
 
   const quotes = await dailyQuotes({ code, from: fromStr, to: toStr });
 
-  // Filter rows with valid OHLC (sometimes adjusted fields are null on holidays etc.)
   const valid = quotes.filter(
     (q) =>
       q.Close !== null &&
@@ -86,7 +87,6 @@ export async function syncPricesIfStale(code: string): Promise<{ count: number; 
   );
 
   if (valid.length > 0) {
-    // Replace cache for this code
     await prisma.$transaction([
       prisma.priceCache.deleteMany({ where: { code } }),
       prisma.priceCache.createMany({
@@ -110,4 +110,67 @@ export async function syncPricesIfStale(code: string): Promise<{ count: number; 
   });
 
   return { count: valid.length, refreshed: true };
+}
+
+export async function syncFinancialsIfStale(
+  code: string,
+): Promise<{ count: number; refreshed: boolean }> {
+  const key = `financials:${code}`;
+  const log = await prisma.syncLog.findUnique({ where: { key } });
+
+  if (log && Date.now() - log.syncedAt.getTime() < FINANCIALS_TTL_MS) {
+    const count = await prisma.financialCache.count({ where: { code } });
+    if (count > 0) return { count, refreshed: false };
+  }
+
+  const rows = await statements(code);
+  const annual = extractAnnualSummaries(rows);
+
+  // Sort old→new and compute YoY
+  const sorted = [...annual].sort((a, b) =>
+    a.fiscalYearEnd.localeCompare(b.fiscalYearEnd),
+  );
+
+  const records = sorted.map((s, i) => {
+    const prev = sorted[i - 1];
+    const salesYoY =
+      s.netSales != null && prev?.netSales != null && prev.netSales !== 0
+        ? ((s.netSales - prev.netSales) / Math.abs(prev.netSales)) * 100
+        : null;
+    const profitYoY =
+      s.netIncome != null && prev?.netIncome != null && prev.netIncome !== 0
+        ? ((s.netIncome - prev.netIncome) / Math.abs(prev.netIncome)) * 100
+        : null;
+    return {
+      code,
+      fiscalYearEnd: s.fiscalYearEnd,
+      netSales: s.netSales,
+      operatingProfit: s.operatingProfit,
+      ordinaryProfit: s.ordinaryProfit,
+      netIncome: s.netIncome,
+      eps: s.eps,
+      totalAssets: s.totalAssets,
+      equity: s.equity,
+      equityRatio: s.equityRatio,
+      bookValuePerShare: s.bookValuePerShare,
+      dividend: s.dividend,
+      salesYoY,
+      profitYoY,
+    };
+  });
+
+  if (records.length > 0) {
+    await prisma.$transaction([
+      prisma.financialCache.deleteMany({ where: { code } }),
+      prisma.financialCache.createMany({ data: records }),
+    ]);
+  }
+
+  await prisma.syncLog.upsert({
+    where: { key },
+    create: { key, payload: String(records.length) },
+    update: { payload: String(records.length) },
+  });
+
+  return { count: records.length, refreshed: true };
 }

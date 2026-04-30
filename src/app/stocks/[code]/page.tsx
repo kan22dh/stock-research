@@ -1,6 +1,10 @@
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/db";
-import { syncListedInfoIfStale, syncPricesIfStale } from "@/lib/sync";
+import {
+  syncListedInfoIfStale,
+  syncPricesIfStale,
+  syncFinancialsIfStale,
+} from "@/lib/sync";
 import { statements as fetchStatements, JQuantsAuthError, JQuantsApiError } from "@/lib/jquants";
 import {
   extractAnnualSummaries,
@@ -11,6 +15,8 @@ import {
 } from "@/lib/financial-metrics";
 import { CandleChart, type CandlePoint } from "@/components/candle-chart";
 import { WatchToggle } from "@/components/watch-toggle";
+import { AiAnalyze } from "@/components/ai-analyze";
+import { isAiEnabled } from "@/lib/ai";
 
 type PageProps = {
   params: Promise<{ code: string }>;
@@ -29,7 +35,16 @@ export default async function StockDetail({ params }: PageProps) {
   const stock = await prisma.listedStock.findUnique({ where: { code } });
   if (!stock) notFound();
 
-  // Fetch in parallel: prices (cached) + statements (fresh-ish)
+  // Update browse history (fire-and-forget)
+  prisma.browseHistory
+    .upsert({
+      where: { code },
+      create: { code },
+      update: { lastViewed: new Date() },
+    })
+    .catch(() => null);
+
+  // Fetch in parallel: prices (cached) + statements (fresh) + financial cache update
   const [pricesResult, statementsResult] = await Promise.allSettled([
     syncPricesIfStale(code).then(() =>
       prisma.priceCache.findMany({
@@ -39,6 +54,9 @@ export default async function StockDetail({ params }: PageProps) {
     ),
     fetchStatements(code),
   ]);
+
+  // Update financial cache in background (don't block render)
+  syncFinancialsIfStale(code).catch(() => null);
 
   if (pricesResult.status === "rejected") {
     return <ApiErrorView error={pricesResult.reason} />;
@@ -131,6 +149,8 @@ export default async function StockDetail({ params }: PageProps) {
         </div>
         <CandleChart data={candleData} />
       </section>
+
+      <AiAnalyze code={code} aiEnabled={isAiEnabled()} />
 
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <MetricCard label="PER（株価収益率）" value={formatNumber(metrics.per)} suffix="倍" />

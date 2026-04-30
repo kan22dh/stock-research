@@ -13,10 +13,7 @@ export function StockSearch() {
 
   useEffect(() => {
     if (debounce.current) clearTimeout(debounce.current);
-    if (query.trim().length === 0) {
-      setResults([]);
-      return;
-    }
+    if (query.trim().length === 0) return;
     debounce.current = setTimeout(() => {
       startTransition(async () => {
         try {
@@ -40,7 +37,14 @@ export function StockSearch() {
         <input
           type="search"
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => {
+            const v = e.target.value;
+            setQuery(v);
+            if (v.trim() === "") {
+              setResults([]);
+              setError(null);
+            }
+          }}
           placeholder="銘柄コード（例: 7203）または銘柄名で検索"
           className="w-full rounded-xl border border-black/15 dark:border-white/15 bg-white dark:bg-neutral-900 px-4 py-3 text-base focus:outline-none focus:ring-2 focus:ring-neutral-900 dark:focus:ring-white"
           autoFocus

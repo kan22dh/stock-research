@@ -1,22 +1,36 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { StockSearch } from "@/components/stock-search";
+import { MacroSnapshot } from "@/components/macro-snapshot";
+
+const EXAMPLE_STOCKS = [
+  { code: "72030", name: "トヨタ自動車", note: "大型・自動車" },
+  { code: "94320", name: "NTT", note: "大型・通信" },
+  { code: "62700", name: "SMC", note: "中型・電機" },
+];
 
 export default async function Home() {
-  const watch = await prisma.watchlist.findMany({
-    take: 10,
-    orderBy: { createdAt: "desc" },
-    include: { stock: true },
-  });
-
-  const stockCount = await prisma.listedStock.count();
+  const [watch, history, stockCount] = await Promise.all([
+    prisma.watchlist.findMany({
+      take: 6,
+      orderBy: { createdAt: "desc" },
+      include: { stock: true },
+    }),
+    prisma.browseHistory.findMany({
+      take: 6,
+      orderBy: { lastViewed: "desc" },
+      include: { stock: true },
+    }),
+    prisma.listedStock.count(),
+  ]);
 
   return (
-    <div className="space-y-8 max-w-3xl mx-auto">
-      <section className="pt-4">
+    <div className="space-y-8">
+      <section className="pt-2">
         <h1 className="text-3xl font-bold tracking-tight">銘柄検索</h1>
         <p className="text-sm text-neutral-600 dark:text-neutral-400 mt-2">
-          コードまたは銘柄名で個別株を検索し、ローソクチャートと財務指標を1画面で確認できます。
+          コードまたは銘柄名で個別株を検索し、ローソクチャート・財務指標・AI分析を1画面で確認できます。
         </p>
       </section>
 
@@ -28,13 +42,46 @@ export default async function Home() {
         </div>
       )}
 
+      <Suspense fallback={null}>
+        <MacroSnapshot />
+      </Suspense>
+
+      {history.length > 0 && (
+        <section className="space-y-3">
+          <h2 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300">
+            最近見た銘柄
+          </h2>
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
+            {history.map((h) => (
+              <Link
+                key={h.code}
+                href={`/stocks/${h.code}`}
+                className="rounded-lg border border-black/10 dark:border-white/10 bg-white dark:bg-neutral-900 px-4 py-2.5 text-sm hover:bg-neutral-50 dark:hover:bg-neutral-800/50 transition flex items-center justify-between gap-2"
+              >
+                <div className="min-w-0">
+                  <div className="font-medium truncate">
+                    <span className="font-mono text-neutral-500 mr-2">
+                      {h.stock.ticker}
+                    </span>
+                    {h.stock.name}
+                  </div>
+                </div>
+                <span className="text-neutral-400 shrink-0">→</span>
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
+
       {watch.length > 0 && (
         <section className="space-y-3">
           <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold">ウォッチリスト</h2>
+            <h2 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300">
+              ⭐ ウォッチリスト
+            </h2>
             <Link
               href="/watchlist"
-              className="text-sm text-neutral-600 dark:text-neutral-400 hover:underline"
+              className="text-xs text-neutral-500 hover:underline"
             >
               すべて見る →
             </Link>
@@ -62,6 +109,26 @@ export default async function Home() {
               </li>
             ))}
           </ul>
+        </section>
+      )}
+
+      {history.length === 0 && watch.length === 0 && stockCount > 0 && (
+        <section className="space-y-3">
+          <h2 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300">
+            👋 まずはサンプル銘柄で試す
+          </h2>
+          <div className="grid sm:grid-cols-3 gap-2">
+            {EXAMPLE_STOCKS.map((s) => (
+              <Link
+                key={s.code}
+                href={`/stocks/${s.code}`}
+                className="rounded-lg border border-black/10 dark:border-white/10 bg-white dark:bg-neutral-900 px-4 py-3 text-sm hover:bg-neutral-50 dark:hover:bg-neutral-800/50 transition"
+              >
+                <div className="font-medium">{s.name}</div>
+                <div className="text-xs text-neutral-500 mt-0.5">{s.note}</div>
+              </Link>
+            ))}
+          </div>
         </section>
       )}
     </div>

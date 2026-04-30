@@ -53,6 +53,24 @@ export default function RootLayout({
               >
                 スクリーナー
               </Link>
+              <Link
+                href="/compare"
+                className="text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white transition"
+              >
+                比較
+              </Link>
+              <Link
+                href="/sectors"
+                className="text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white transition"
+              >
+                業界
+              </Link>
+              <Link
+                href="/macro"
+                className="text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white transition"
+              >
+                マクロ
+              </Link>
             </nav>
           </div>
         </header>

@@ -1,7 +1,7 @@
-import { prisma } from "./db";
+// J-Quants API v2 client (X-API-Key authentication)
+// Spec: https://jpx-jquants.com/spec/
 
-const BASE_URL = "https://api.jquants.com/v1";
-const ID_TOKEN_TTL_MS = 23 * 60 * 60 * 1000; // 24h - 1h margin
+const BASE_URL = "https://api.jquants.com/v2";
 
 export class JQuantsAuthError extends Error {
   constructor(message: string) {
@@ -19,107 +19,64 @@ export class JQuantsApiError extends Error {
   }
 }
 
-type CachedIdToken = {
-  idToken: string;
-  fetchedAt: number;
-};
-
-async function getRefreshToken(): Promise<string> {
-  const token = process.env.JQUANTS_REFRESH_TOKEN?.trim();
-  if (!token) {
+function getApiKey(): string {
+  // Support both new var name and the legacy one used during MVP setup
+  const key = (
+    process.env.JQUANTS_API_KEY ?? process.env.JQUANTS_REFRESH_TOKEN
+  )?.trim();
+  if (!key) {
     throw new JQuantsAuthError(
-      "JQUANTS_REFRESH_TOKEN が設定されていません。.env を確認してください。",
+      "JQUANTS_API_KEY が設定されていません。.env を確認してください。",
     );
   }
-  return token;
+  return key;
 }
 
-async function fetchIdToken(refreshToken: string): Promise<string> {
-  const url = `${BASE_URL}/token/auth_refresh?refreshtoken=${encodeURIComponent(refreshToken)}`;
-  const res = await fetch(url, { method: "POST" });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new JQuantsAuthError(
-      `ID トークン取得失敗 (${res.status}): ${body.slice(0, 200)}`,
-    );
-  }
-  const data = (await res.json()) as { idToken?: string };
-  if (!data.idToken) {
-    throw new JQuantsAuthError("レスポンスに idToken が含まれていません");
-  }
-  return data.idToken;
-}
-
-async function getIdToken(): Promise<string> {
-  const cached = await prisma.syncLog.findUnique({ where: { key: "id_token" } });
-  if (cached?.payload) {
-    try {
-      const parsed = JSON.parse(cached.payload) as CachedIdToken;
-      if (Date.now() - parsed.fetchedAt < ID_TOKEN_TTL_MS) {
-        return parsed.idToken;
-      }
-    } catch {
-      // fall through and refresh
-    }
-  }
-
-  const refreshToken = await getRefreshToken();
-  const idToken = await fetchIdToken(refreshToken);
-
-  const payload: CachedIdToken = { idToken, fetchedAt: Date.now() };
-  await prisma.syncLog.upsert({
-    where: { key: "id_token" },
-    create: { key: "id_token", payload: JSON.stringify(payload) },
-    update: { payload: JSON.stringify(payload) },
-  });
-
-  return idToken;
-}
-
-async function authedFetch(path: string, params?: Record<string, string>): Promise<unknown> {
-  const idToken = await getIdToken();
+async function authedFetch(
+  path: string,
+  params?: Record<string, string>,
+): Promise<unknown> {
+  const apiKey = getApiKey();
   const url = new URL(`${BASE_URL}${path}`);
   if (params) {
     for (const [k, v] of Object.entries(params)) {
       if (v !== undefined && v !== "") url.searchParams.set(k, v);
     }
   }
-  const res = await fetch(url.toString(), {
-    headers: { Authorization: `Bearer ${idToken}` },
-  });
-  if (res.status === 401 || res.status === 403) {
-    // Token may have expired; clear cache and retry once
-    await prisma.syncLog.delete({ where: { key: "id_token" } }).catch(() => {});
-    const fresh = await getIdToken();
-    const retry = await fetch(url.toString(), {
-      headers: { Authorization: `Bearer ${fresh}` },
+
+  let lastBody = "";
+  let lastStatus = 0;
+  const RETRY_429_DELAYS_MS = [3000, 8000]; // try once after 3s, then 8s
+  for (let attempt = 0; attempt <= RETRY_429_DELAYS_MS.length; attempt++) {
+    const res = await fetch(url.toString(), {
+      headers: { "X-API-Key": apiKey },
     });
-    if (!retry.ok) {
-      const body = await retry.text();
-      throw new JQuantsApiError(
-        `J-Quants API エラー ${retry.status}: ${body.slice(0, 200)}`,
-        retry.status,
+    if (res.ok) return res.json();
+    lastStatus = res.status;
+    lastBody = await res.text();
+    if (res.status === 401 || res.status === 403) {
+      throw new JQuantsAuthError(
+        `J-Quants 認証失敗 (${res.status}): ${lastBody.slice(0, 200)}`,
       );
     }
-    return retry.json();
+    if (res.status === 429 && attempt < RETRY_429_DELAYS_MS.length) {
+      await new Promise((r) => setTimeout(r, RETRY_429_DELAYS_MS[attempt]));
+      continue;
+    }
+    break;
   }
-  if (!res.ok) {
-    const body = await res.text();
-    throw new JQuantsApiError(
-      `J-Quants API エラー ${res.status}: ${body.slice(0, 200)}`,
-      res.status,
-    );
-  }
-  return res.json();
+  throw new JQuantsApiError(
+    `J-Quants API エラー ${lastStatus}: ${lastBody.slice(0, 200)}`,
+    lastStatus,
+  );
 }
 
-// Pagination helper for endpoints that return pagination_key
-async function fetchAllPaginated<T>(
+async function fetchAllPaginated<TInternal>(
   path: string,
   params: Record<string, string>,
-  arrayKey: string,
-): Promise<T[]> {
-  const all: T[] = [];
+  mapper: (raw: Record<string, unknown>) => TInternal,
+): Promise<TInternal[]> {
+  const all: TInternal[] = [];
   let paginationKey: string | undefined;
   let safety = 0;
   do {
@@ -127,20 +84,23 @@ async function fetchAllPaginated<T>(
       ...params,
       ...(paginationKey ? { pagination_key: paginationKey } : {}),
     })) as Record<string, unknown>;
-    const arr = res[arrayKey];
-    if (Array.isArray(arr)) all.push(...(arr as T[]));
-    paginationKey = typeof res.pagination_key === "string" ? res.pagination_key : undefined;
+    const arr = res.data;
+    if (Array.isArray(arr)) {
+      for (const r of arr) all.push(mapper(r as Record<string, unknown>));
+    }
+    paginationKey =
+      typeof res.pagination_key === "string" ? res.pagination_key : undefined;
     safety++;
-    if (safety > 50) break; // hard ceiling
+    if (safety > 80) break;
   } while (paginationKey);
   return all;
 }
 
-// ---------- API endpoints ----------
+// ---------- Public types (kept stable so other modules don't change) ----------
 
 export type ListedInfo = {
   Date: string;
-  Code: string; // 5桁
+  Code: string;
   CompanyName: string;
   CompanyNameEnglish?: string;
   Sector17Code?: string;
@@ -152,12 +112,8 @@ export type ListedInfo = {
   MarketCodeName?: string;
 };
 
-export async function listedInfo(): Promise<ListedInfo[]> {
-  return fetchAllPaginated<ListedInfo>("/listed/info", {}, "info");
-}
-
 export type DailyQuote = {
-  Date: string; // "YYYY-MM-DD"
+  Date: string;
   Code: string;
   Open: number | null;
   High: number | null;
@@ -172,29 +128,13 @@ export type DailyQuote = {
   AdjustmentVolume?: number | null;
 };
 
-export async function dailyQuotes(params: {
-  code: string;
-  from?: string; // YYYY-MM-DD
-  to?: string;
-}): Promise<DailyQuote[]> {
-  return fetchAllPaginated<DailyQuote>(
-    "/prices/daily_quotes",
-    {
-      code: params.code,
-      ...(params.from ? { from: params.from } : {}),
-      ...(params.to ? { to: params.to } : {}),
-    },
-    "daily_quotes",
-  );
-}
-
 export type StatementRow = {
   DisclosedDate: string;
   DisclosedTime?: string;
   LocalCode: string;
   DisclosureNumber: string;
   TypeOfDocument: string;
-  TypeOfCurrentPeriod: string; // "1Q" | "2Q" | "3Q" | "FY"
+  TypeOfCurrentPeriod: string;
   CurrentPeriodStartDate: string;
   CurrentPeriodEndDate: string;
   CurrentFiscalYearStartDate: string;
@@ -211,10 +151,107 @@ export type StatementRow = {
   ResultDividendPerShareAnnual?: string;
 };
 
+// ---------- Mappers (v2 short keys → internal long keys) ----------
+
+function pickStr(o: Record<string, unknown>, k: string): string | undefined {
+  const v = o[k];
+  return typeof v === "string" ? v : undefined;
+}
+function pickNum(o: Record<string, unknown>, k: string): number | null {
+  const v = o[k];
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string" && v !== "") {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+function mapListedInfo(r: Record<string, unknown>): ListedInfo {
+  return {
+    Date: pickStr(r, "Date") ?? "",
+    Code: pickStr(r, "Code") ?? "",
+    CompanyName: pickStr(r, "CoName") ?? "",
+    CompanyNameEnglish: pickStr(r, "CoNameEn"),
+    Sector17Code: pickStr(r, "S17"),
+    Sector17CodeName: pickStr(r, "S17Nm"),
+    Sector33Code: pickStr(r, "S33"),
+    Sector33CodeName: pickStr(r, "S33Nm"),
+    ScaleCategory: pickStr(r, "ScaleCat"),
+    MarketCode: pickStr(r, "Mkt"),
+    MarketCodeName: pickStr(r, "MktNm"),
+  };
+}
+
+function mapDailyQuote(r: Record<string, unknown>): DailyQuote {
+  return {
+    Date: pickStr(r, "Date") ?? "",
+    Code: pickStr(r, "Code") ?? "",
+    Open: pickNum(r, "O"),
+    High: pickNum(r, "H"),
+    Low: pickNum(r, "L"),
+    Close: pickNum(r, "C"),
+    Volume: pickNum(r, "Vo"),
+    TurnoverValue: pickNum(r, "Va"),
+    AdjustmentOpen: pickNum(r, "AdjO"),
+    AdjustmentHigh: pickNum(r, "AdjH"),
+    AdjustmentLow: pickNum(r, "AdjL"),
+    AdjustmentClose: pickNum(r, "AdjC"),
+    AdjustmentVolume: pickNum(r, "AdjVo"),
+  };
+}
+
+function mapStatement(r: Record<string, unknown>): StatementRow {
+  return {
+    DisclosedDate: pickStr(r, "DiscDate") ?? "",
+    DisclosedTime: pickStr(r, "DiscTime"),
+    LocalCode: pickStr(r, "Code") ?? "",
+    DisclosureNumber: pickStr(r, "DiscNo") ?? "",
+    TypeOfDocument: pickStr(r, "DocType") ?? "",
+    TypeOfCurrentPeriod: pickStr(r, "CurPerType") ?? "",
+    CurrentPeriodStartDate: pickStr(r, "CurPerSt") ?? "",
+    CurrentPeriodEndDate: pickStr(r, "CurPerEn") ?? "",
+    CurrentFiscalYearStartDate: pickStr(r, "CurFYSt") ?? "",
+    CurrentFiscalYearEndDate: pickStr(r, "CurFYEn") ?? "",
+    NetSales: pickStr(r, "Sales"),
+    OperatingProfit: pickStr(r, "OP"),
+    OrdinaryProfit: pickStr(r, "OdP"),
+    Profit: pickStr(r, "NP"),
+    EarningsPerShare: pickStr(r, "EPS"),
+    TotalAssets: pickStr(r, "TA"),
+    Equity: pickStr(r, "Eq"),
+    EquityToAssetRatio: pickStr(r, "EqAR"),
+    BookValuePerShare: pickStr(r, "BPS"),
+    ResultDividendPerShareAnnual: pickStr(r, "DivAnn"),
+  };
+}
+
+// ---------- API endpoints ----------
+
+export async function listedInfo(): Promise<ListedInfo[]> {
+  return fetchAllPaginated<ListedInfo>("/equities/master", {}, mapListedInfo);
+}
+
+export async function dailyQuotes(params: {
+  code: string;
+  from?: string;
+  to?: string;
+}): Promise<DailyQuote[]> {
+  return fetchAllPaginated<DailyQuote>(
+    "/equities/bars/daily",
+    {
+      code: params.code,
+      ...(params.from ? { from: params.from } : {}),
+      ...(params.to ? { to: params.to } : {}),
+    },
+    mapDailyQuote,
+  );
+}
+
 export async function statements(code: string): Promise<StatementRow[]> {
   return fetchAllPaginated<StatementRow>(
-    "/fins/statements",
+    "/fins/summary",
     { code },
-    "statements",
+    mapStatement,
   );
 }

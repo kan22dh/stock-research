@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { prisma } from "@/lib/db";
+import { WatchToggle } from "@/components/watch-toggle";
 
 export default async function WatchlistPage() {
   const items = await prisma.watchlist.findMany({
@@ -27,26 +28,24 @@ export default async function WatchlistPage() {
       ) : (
         <ul className="rounded-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-neutral-900 divide-y divide-black/5 dark:divide-white/5 overflow-hidden">
           {items.map((w) => (
-            <li key={w.id}>
+            <li key={w.id} className="flex items-center justify-between gap-3 px-5 py-4 hover:bg-neutral-50 dark:hover:bg-neutral-800/50 transition">
               <Link
                 href={`/stocks/${w.code}`}
-                className="flex items-center justify-between gap-4 px-5 py-4 hover:bg-neutral-50 dark:hover:bg-neutral-800/50 transition"
+                className="flex-1 min-w-0"
               >
-                <div className="min-w-0">
-                  <div className="font-medium truncate">
-                    <span className="font-mono text-neutral-500 mr-2">
-                      {w.stock.ticker}
-                    </span>
-                    {w.stock.name}
-                  </div>
-                  <div className="text-xs text-neutral-500 mt-0.5 flex gap-2 flex-wrap">
-                    {w.stock.sector33Name && <span>{w.stock.sector33Name}</span>}
-                    {w.stock.marketName && <span>・{w.stock.marketName}</span>}
-                    {w.stock.scaleCategory && <span>・{w.stock.scaleCategory}</span>}
-                  </div>
+                <div className="font-medium truncate">
+                  <span className="font-mono text-neutral-500 mr-2">
+                    {w.stock.ticker}
+                  </span>
+                  {w.stock.name}
                 </div>
-                <span className="text-neutral-400 shrink-0">→</span>
+                <div className="text-xs text-neutral-500 mt-0.5 flex gap-2 flex-wrap">
+                  {w.stock.sector33Name && <span>{w.stock.sector33Name}</span>}
+                  {w.stock.marketName && <span>・{w.stock.marketName}</span>}
+                  {w.stock.scaleCategory && <span>・{w.stock.scaleCategory}</span>}
+                </div>
               </Link>
+              <WatchToggle code={w.code} initialWatched={true} />
             </li>
           ))}
         </ul>
