@@ -133,6 +133,8 @@ export default async function ScreenerPage({
         <BulkSyncButton />
       </section>
 
+      <PresetButtons />
+
       <FilterForm
         currentGrowth={sp.growth ?? ""}
         currentProfit={sp.profit ?? ""}
@@ -227,6 +229,50 @@ export default async function ScreenerPage({
           </div>
         )}
       </section>
+    </div>
+  );
+}
+
+function PresetButtons() {
+  const presets: Array<{ label: string; emoji: string; href: string; desc: string }> = [
+    {
+      emoji: "🚀",
+      label: "高成長",
+      href: "/screener?growth=20&sort=growth",
+      desc: "売上YoY ≥20%",
+    },
+    {
+      emoji: "💎",
+      label: "高成長＋利益拡大",
+      href: "/screener?growth=15&profit=15&sort=profit",
+      desc: "売上+15%, 利益+15%",
+    },
+    {
+      emoji: "🌱",
+      label: "黒字化勢い",
+      href: "/screener?profit=50&sort=profit",
+      desc: "純利益YoY ≥50%",
+    },
+    {
+      emoji: "📊",
+      label: "全銘柄",
+      href: "/screener",
+      desc: "フィルタなし",
+    },
+  ];
+  return (
+    <div className="flex items-center gap-2 flex-wrap">
+      <span className="text-xs text-neutral-500">クイック:</span>
+      {presets.map((p) => (
+        <Link
+          key={p.label}
+          href={p.href}
+          className="text-xs rounded-full border border-black/15 dark:border-white/15 bg-white dark:bg-neutral-900 px-3 py-1 hover:bg-neutral-50 dark:hover:bg-neutral-800 transition"
+          title={p.desc}
+        >
+          {p.emoji} {p.label}
+        </Link>
+      ))}
     </div>
   );
 }
