@@ -11,6 +11,7 @@ const COLOR_BY_ID: Record<string, string> = {
   DEXJPUS: "#16a34a",    // green - fx
   DCOILWTICO: "#525252", // gray - oil
   PAYEMS: "#0284c7",     // blue - employment
+  VIXCLS: "#be185d",     // pink - volatility
 };
 
 export default async function MacroPage() {

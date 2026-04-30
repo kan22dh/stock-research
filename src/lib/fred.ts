@@ -61,6 +61,12 @@ const SERIES_META: Record<string, Omit<FredSeries, "points" | "source">> = {
     description: "All Employees, Total Nonfarm (千人, 季節調整済)",
     unit: "千人",
   },
+  VIXCLS: {
+    id: "VIXCLS",
+    label: "VIX指数（恐怖指数）",
+    description: "CBOE Volatility Index - 市場のリスク認識",
+    unit: "Index",
+  },
 };
 
 export const FRED_SERIES_IDS = Object.keys(SERIES_META) as Array<keyof typeof SERIES_META>;

@@ -93,6 +93,28 @@ export default async function StockDetail({ params }: PageProps) {
       ? (change / prevClose) * 100
       : null;
 
+  // 52-week (period available) high/low
+  const year52High = prices.length > 0 ? Math.max(...prices.map((p) => p.high)) : null;
+  const year52Low = prices.length > 0 ? Math.min(...prices.map((p) => p.low)) : null;
+  const positionInRange =
+    latestPrice != null && year52High != null && year52Low != null && year52High !== year52Low
+      ? ((latestPrice - year52Low) / (year52High - year52Low)) * 100
+      : null;
+
+  // Returns over various windows
+  function returnPct(daysBack: number): number | null {
+    if (latestPrice == null || prices.length === 0) return null;
+    const idx = prices.length - 1 - daysBack;
+    if (idx < 0) return null;
+    const past = prices[idx].close;
+    if (past === 0) return null;
+    return ((latestPrice - past) / past) * 100;
+  }
+  const ret1M = returnPct(20);
+  const ret3M = returnPct(60);
+  const ret6M = returnPct(120);
+  const ret1Y = returnPct(240);
+
   return (
     <div className="space-y-6">
       <header className="flex items-start justify-between gap-4 flex-wrap">
@@ -141,6 +163,46 @@ export default async function StockDetail({ params }: PageProps) {
             </div>
           )}
         </div>
+
+        {(ret1M != null || ret3M != null || ret6M != null || ret1Y != null) && (
+          <div className="mt-4 pt-4 border-t border-black/5 dark:border-white/5 grid grid-cols-4 gap-3 text-xs">
+            <ReturnCell label="1ヶ月" value={ret1M} />
+            <ReturnCell label="3ヶ月" value={ret3M} />
+            <ReturnCell label="6ヶ月" value={ret6M} />
+            <ReturnCell label="1年" value={ret1Y} />
+          </div>
+        )}
+
+        {year52High != null && year52Low != null && (
+          <div className="mt-4 pt-4 border-t border-black/5 dark:border-white/5 grid grid-cols-3 gap-3 text-xs">
+            <div>
+              <div className="text-neutral-500">取得期間 高値</div>
+              <div className="font-semibold tabular-nums mt-0.5 text-emerald-600 dark:text-emerald-400">
+                {year52High.toLocaleString("ja-JP")}円
+              </div>
+            </div>
+            <div>
+              <div className="text-neutral-500">取得期間 安値</div>
+              <div className="font-semibold tabular-nums mt-0.5 text-red-600 dark:text-red-400">
+                {year52Low.toLocaleString("ja-JP")}円
+              </div>
+            </div>
+            <div>
+              <div className="text-neutral-500">レンジ内位置</div>
+              <div className="font-semibold tabular-nums mt-0.5">
+                {positionInRange != null ? `${positionInRange.toFixed(0)}%` : "—"}
+              </div>
+              {positionInRange != null && (
+                <div className="mt-1 h-1.5 rounded-full bg-neutral-200 dark:bg-neutral-800 overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-red-500 via-amber-500 to-emerald-500"
+                    style={{ width: `${positionInRange}%` }}
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </section>
 
       <section className="rounded-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-neutral-900 p-3">
@@ -230,6 +292,25 @@ export default async function StockDetail({ params }: PageProps) {
           財務データの取得に失敗しました（後でお試しください）
         </div>
       )}
+    </div>
+  );
+}
+
+function ReturnCell({ label, value }: { label: string; value: number | null }) {
+  return (
+    <div>
+      <div className="text-neutral-500">{label}リターン</div>
+      <div
+        className={`font-semibold tabular-nums mt-0.5 ${
+          value == null
+            ? "text-neutral-500"
+            : value >= 0
+              ? "text-emerald-600 dark:text-emerald-400"
+              : "text-red-600 dark:text-red-400"
+        }`}
+      >
+        {value == null ? "—" : `${value >= 0 ? "+" : ""}${value.toFixed(1)}%`}
+      </div>
     </div>
   );
 }

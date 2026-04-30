@@ -3,6 +3,8 @@ import { prisma } from "@/lib/db";
 import { syncListedInfoIfStale, syncPricesIfStale, syncFinancialsIfStale } from "@/lib/sync";
 import { JQuantsAuthError } from "@/lib/jquants";
 import { CandleChart, type CandlePoint } from "@/components/candle-chart";
+import { CompareAi } from "@/components/compare-ai";
+import { isAiEnabled } from "@/lib/ai";
 import { formatYen, formatPercent, formatNumber } from "@/lib/financial-metrics";
 
 type SearchParams = Promise<{ codes?: string }>;
@@ -65,6 +67,10 @@ export default async function ComparePage({
         <div className="rounded-2xl border border-dashed p-8 text-center text-sm text-neutral-500">
           上の入力欄に「7203,9432」のように銘柄コードを2つカンマ区切りで入力してください
         </div>
+      )}
+
+      {valid.length === 2 && (
+        <CompareAi codes={codes} aiEnabled={isAiEnabled()} />
       )}
 
       {valid.length > 0 && (
