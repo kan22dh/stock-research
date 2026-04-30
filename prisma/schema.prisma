@@ -1,0 +1,64 @@
+// Stock Research dashboard schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Listed company master (synced from J-Quants /listed/info)
+model ListedStock {
+  code            String   @id // 5桁コード (J-Quants形式、例: "13010")
+  ticker          String   // 4桁短縮形 (検索用、例: "1301")
+  name            String
+  nameEnglish     String?
+  sector33Code    String?
+  sector33Name    String?
+  sector17Code    String?
+  sector17Name    String?
+  scaleCategory   String?  // TOPIX区分 (Core30, Large70, Mid400, Small1, Small2 等)
+  marketCode      String?  // 市場区分コード
+  marketName      String?  // プライム/スタンダード/グロース等
+  updatedAt       DateTime @updatedAt
+
+  prices     PriceCache[]
+  watchItems Watchlist[]
+
+  @@index([ticker])
+  @@index([name])
+}
+
+// Daily OHLCV cache (12週遅延データ on free plan)
+model PriceCache {
+  code   String
+  date   DateTime
+  open   Float
+  high   Float
+  low    Float
+  close  Float
+  volume Float
+
+  stock ListedStock @relation(fields: [code], references: [code], onDelete: Cascade)
+
+  @@id([code, date])
+  @@index([code, date])
+}
+
+model Watchlist {
+  id        Int      @id @default(autoincrement())
+  code      String   @unique
+  note      String?
+  createdAt DateTime @default(now())
+
+  stock ListedStock @relation(fields: [code], references: [code], onDelete: Cascade)
+}
+
+// Sync log to know last fetch times
+model SyncLog {
+  key       String   @id // "listed_info" | "prices:{code}" | "id_token"
+  payload   String?  // JSON or token value
+  syncedAt  DateTime @updatedAt
+}
