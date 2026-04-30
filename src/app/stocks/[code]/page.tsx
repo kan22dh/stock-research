@@ -95,6 +95,19 @@ export default async function StockDetail({ params }: PageProps) {
 
   const isWatched = (await prisma.watchlist.findUnique({ where: { code } })) != null;
 
+  // Same-sector peers (up to 8)
+  const peers = stock.sector33Code
+    ? await prisma.listedStock.findMany({
+        where: {
+          sector33Code: stock.sector33Code,
+          code: { not: code },
+          scaleCategory: { not: null },
+        },
+        take: 8,
+        orderBy: { ticker: "asc" },
+      })
+    : [];
+
   // Compute change vs previous close
   const prevClose =
     prices.length >= 2 ? prices[prices.length - 2].close : null;
@@ -303,6 +316,30 @@ export default async function StockDetail({ params }: PageProps) {
         <div className="rounded-lg border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/30 px-4 py-3 text-sm text-amber-800 dark:text-amber-400">
           財務データはまだ取得されていません。バックグラウンドで取得を試みています。数分後にページを再読込してください。
         </div>
+      )}
+
+      {peers.length > 0 && (
+        <section>
+          <h2 className="text-sm font-semibold mb-3">同業他社（{stock.sector33Name}）</h2>
+          <ul className="rounded-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-neutral-900 divide-y divide-black/5 dark:divide-white/5 overflow-hidden">
+            {peers.map((p) => (
+              <li key={p.code}>
+                <a
+                  href={`/stocks/${p.code}`}
+                  className="flex items-center justify-between gap-3 px-4 py-2 text-sm hover:bg-neutral-50 dark:hover:bg-neutral-800/50 transition"
+                >
+                  <span className="min-w-0 flex items-center gap-2">
+                    <span className="font-mono text-neutral-500 shrink-0">{p.ticker}</span>
+                    <span className="truncate font-medium">{p.name}</span>
+                  </span>
+                  <span className="text-xs text-neutral-500 shrink-0">
+                    {p.scaleCategory}
+                  </span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
     </div>
   );
