@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
 import { syncFinancialsIfStale } from "@/lib/sync";
 
-const BATCH_DELAY_MS = 1200; // J-Quants free plan rate-limits aggressively
+const BATCH_DELAY_MS = 6000; // J-Quants free plan rate-limits aggressively (~10 req/min)
 
 // Bulk-sync financial data for the given codes (or all small caps if not provided).
 // Returns counts. Designed to be called via Server Action from the screener UI.
@@ -22,7 +22,7 @@ export async function bulkSyncFinancials(
         financials: { none: {} },
       },
       select: { code: true },
-      take: 50,
+      take: 30, // 30 * 6s ≈ 3 min per click (within reasonable wait)
       orderBy: { ticker: "asc" },
     });
     targetCodes = smalls.map((s) => s.code);

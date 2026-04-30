@@ -127,8 +127,8 @@ export default async function ScreenerPage({
         </div>
         <div className="text-xs text-neutral-600 dark:text-neutral-400">
           スクリーニングするには財務データを事前に取得する必要があります（J-Quantsの個別銘柄APIから）。
-          ボタンを押すと小型株50件の財務データを取得します（J-Quants無料プランのレート制限に配慮、約1〜2分）。
-          複数回押すと別の銘柄も取得されます。
+          ボタンを押すと小型株30件の財務データを取得します（J-Quants無料プランのレート制限に配慮、約3分）。
+          押すたびに未取得の銘柄が追加されます（取得済はスキップ）。
         </div>
         <BulkSyncButton />
       </section>

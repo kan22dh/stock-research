@@ -5,13 +5,13 @@ import {
   syncPricesIfStale,
   syncFinancialsIfStale,
 } from "@/lib/sync";
-import { statements as fetchStatements, JQuantsAuthError, JQuantsApiError } from "@/lib/jquants";
+import { JQuantsAuthError, JQuantsApiError } from "@/lib/jquants";
 import {
-  extractAnnualSummaries,
   deriveMetrics,
   formatYen,
   formatPercent,
   formatNumber,
+  type FiscalYearSummary,
 } from "@/lib/financial-metrics";
 import { CandleChart, type CandlePoint } from "@/components/candle-chart";
 import { WatchToggle } from "@/components/watch-toggle";
@@ -44,18 +44,21 @@ export default async function StockDetail({ params }: PageProps) {
     })
     .catch(() => null);
 
-  // Fetch in parallel: prices (cached) + statements (fresh) + financial cache update
-  const [pricesResult, statementsResult] = await Promise.allSettled([
+  // Fetch prices (sync if stale) - rate-limit safe per syncPricesIfStale TTL
+  const pricesResult = await Promise.allSettled([
     syncPricesIfStale(code).then(() =>
       prisma.priceCache.findMany({
         where: { code },
         orderBy: { date: "asc" },
       }),
     ),
-    fetchStatements(code),
-  ]);
+  ]).then((r) => r[0]);
 
-  // Update financial cache in background (don't block render)
+  // Read financial data from cache. Background-refresh without blocking render.
+  const financialRows = await prisma.financialCache.findMany({
+    where: { code },
+    orderBy: { fiscalYearEnd: "asc" },
+  });
   syncFinancialsIfStale(code).catch(() => null);
 
   if (pricesResult.status === "rejected") {
@@ -63,10 +66,19 @@ export default async function StockDetail({ params }: PageProps) {
   }
   const prices = pricesResult.value;
 
-  const annualSummaries =
-    statementsResult.status === "fulfilled"
-      ? extractAnnualSummaries(statementsResult.value)
-      : [];
+  const annualSummaries: FiscalYearSummary[] = financialRows.map((f) => ({
+    fiscalYearEnd: f.fiscalYearEnd,
+    netSales: f.netSales,
+    operatingProfit: f.operatingProfit,
+    ordinaryProfit: f.ordinaryProfit,
+    netIncome: f.netIncome,
+    eps: f.eps,
+    totalAssets: f.totalAssets,
+    equity: f.equity,
+    equityRatio: f.equityRatio,
+    bookValuePerShare: f.bookValuePerShare,
+    dividend: f.dividend,
+  }));
 
   const candleData: CandlePoint[] = prices.map((p) => ({
     time: p.date.toISOString().slice(0, 10),
@@ -287,9 +299,9 @@ export default async function StockDetail({ params }: PageProps) {
         </section>
       )}
 
-      {statementsResult.status === "rejected" && (
+      {annualSummaries.length === 0 && (
         <div className="rounded-lg border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/30 px-4 py-3 text-sm text-amber-800 dark:text-amber-400">
-          財務データの取得に失敗しました（後でお試しください）
+          財務データはまだ取得されていません。バックグラウンドで取得を試みています。数分後にページを再読込してください。
         </div>
       )}
     </div>

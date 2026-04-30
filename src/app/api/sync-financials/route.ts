@@ -4,9 +4,10 @@ import { syncFinancialsIfStale, syncListedInfoIfStale } from "@/lib/sync";
 
 export const maxDuration = 300; // up to 5 min
 
-// J-Quants free plan rate-limits aggressively. 1.2s between calls keeps us under
-// the typical 50/min throttle and gives the API headroom even after retries.
-const BATCH_DELAY_MS = 1200;
+// J-Quants free plan rate-limits aggressively (~10 req/min observed empirically).
+// 6s between calls keeps us safely under the throttle so a 50-batch completes
+// without long retry chains.
+const BATCH_DELAY_MS = 6000;
 
 export async function POST(req: Request) {
   const url = new URL(req.url);

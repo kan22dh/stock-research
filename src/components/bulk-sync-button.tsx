@@ -31,7 +31,7 @@ export function BulkSyncButton() {
           }}
           className="rounded-lg bg-neutral-900 dark:bg-white px-4 py-2 text-white dark:text-neutral-900 text-sm font-medium hover:opacity-90 disabled:opacity-50 transition"
         >
-          {pending ? "取得中... (1〜2分かかります)" : "📊 未取得の小型株50件をまとめて取得"}
+          {pending ? "取得中... (約3分かかります)" : "📊 未取得の小型株30件をまとめて取得"}
         </button>
         {result && !pending && (
           <span
