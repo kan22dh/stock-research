@@ -10,8 +10,7 @@ import { formatYen, formatPercent, formatNumber } from "@/lib/financial-metrics"
 type SearchParams = Promise<{ codes?: string }>;
 
 async function loadStock(code: string) {
-  await syncPricesIfStale(code).catch(() => null);
-  await syncFinancialsIfStale(code).catch(() => null);
+  // Read everything from cache, refresh in background (don't block)
   const [stock, prices, fin] = await Promise.all([
     prisma.listedStock.findUnique({ where: { code } }),
     prisma.priceCache.findMany({ where: { code }, orderBy: { date: "asc" } }),
@@ -21,6 +20,8 @@ async function loadStock(code: string) {
       take: 1,
     }),
   ]);
+  syncPricesIfStale(code).catch(() => null);
+  syncFinancialsIfStale(code).catch(() => null);
   return { stock, prices, latestFin: fin[0] ?? null };
 }
 

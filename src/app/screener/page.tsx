@@ -8,9 +8,10 @@ import { formatYen, formatPercent } from "@/lib/financial-metrics";
 const SMALL_SCALES = ["TOPIX Small 1", "TOPIX Small 2"];
 
 type SearchParams = Promise<{
-  growth?: string; // min sales YoY %
-  profit?: string; // min profit YoY %
-  sort?: string;   // "growth" | "profit" | "ticker"
+  growth?: string;     // min sales YoY %
+  profit?: string;     // min profit YoY %
+  fcGrowth?: string;   // min forecast sales YoY %
+  sort?: string;       // "growth" | "profit" | "fcGrowth" | "ticker"
 }>;
 
 export default async function ScreenerPage({
@@ -20,7 +21,8 @@ export default async function ScreenerPage({
 }) {
   const sp = await searchParams;
   const minGrowth = sp.growth ? Number(sp.growth) : 0;
-  const minProfit = sp.profit ? Number(sp.profit) : -9999; // off by default
+  const minProfit = sp.profit ? Number(sp.profit) : -9999;
+  const minFcGrowth = sp.fcGrowth ? Number(sp.fcGrowth) : -9999;
   const sortKey = sp.sort ?? "growth";
 
   let authError: string | null = null;
@@ -53,6 +55,12 @@ export default async function ScreenerPage({
     if (!latestFinByCode.has(f.code)) latestFinByCode.set(f.code, f);
   }
 
+  // Get forecasts for all small caps
+  const allForecasts = await prisma.forecast.findMany({
+    where: { code: { in: smallStocks.map((s) => s.code) } },
+  });
+  const forecastByCode = new Map(allForecasts.map((f) => [f.code, f]));
+
   // Join + filter
   type Row = {
     code: string;
@@ -63,6 +71,8 @@ export default async function ScreenerPage({
     scaleCategory: string | null;
     salesYoY: number | null;
     profitYoY: number | null;
+    forecastSalesYoY: number | null;
+    forecastProfitYoY: number | null;
     netSales: number | null;
     netIncome: number | null;
     fiscalYearEnd: string | null;
@@ -71,6 +81,7 @@ export default async function ScreenerPage({
 
   const allRows: Row[] = smallStocks.map((s) => {
     const f = latestFinByCode.get(s.code);
+    const fc = forecastByCode.get(s.code);
     return {
       code: s.code,
       ticker: s.ticker,
@@ -80,6 +91,8 @@ export default async function ScreenerPage({
       scaleCategory: s.scaleCategory,
       salesYoY: f?.salesYoY ?? null,
       profitYoY: f?.profitYoY ?? null,
+      forecastSalesYoY: fc?.salesYoYImplied ?? null,
+      forecastProfitYoY: fc?.profitYoYImplied ?? null,
       netSales: f?.netSales ?? null,
       netIncome: f?.netIncome ?? null,
       fiscalYearEnd: f?.fiscalYearEnd ?? null,
@@ -93,10 +106,13 @@ export default async function ScreenerPage({
   const filtered = allRows
     .filter((r) => r.hasFinancials)
     .filter((r) => (r.salesYoY ?? -9999) >= minGrowth)
-    .filter((r) => (r.profitYoY ?? -9999) >= minProfit);
+    .filter((r) => (r.profitYoY ?? -9999) >= minProfit)
+    .filter((r) => (r.forecastSalesYoY ?? -9999) >= minFcGrowth);
 
   filtered.sort((a, b) => {
     if (sortKey === "profit") return (b.profitYoY ?? -9999) - (a.profitYoY ?? -9999);
+    if (sortKey === "fcGrowth")
+      return (b.forecastSalesYoY ?? -9999) - (a.forecastSalesYoY ?? -9999);
     if (sortKey === "ticker") return a.ticker.localeCompare(b.ticker);
     // default: growth
     return (b.salesYoY ?? -9999) - (a.salesYoY ?? -9999);
@@ -135,9 +151,20 @@ export default async function ScreenerPage({
 
       <PresetButtons />
 
+      <div className="flex items-center gap-2 flex-wrap text-xs">
+        <a
+          href={`/api/screener-csv?growth=${minGrowth}&profit=${minProfit > -1000 ? minProfit : ""}`}
+          className="rounded-full border border-black/15 dark:border-white/15 bg-white dark:bg-neutral-900 px-3 py-1 hover:bg-neutral-50 dark:hover:bg-neutral-800 transition"
+        >
+          📥 CSVダウンロード
+        </a>
+        <span className="text-neutral-500">取得済の小型株を現在のフィルタで出力</span>
+      </div>
+
       <FilterForm
         currentGrowth={sp.growth ?? ""}
         currentProfit={sp.profit ?? ""}
+        currentFcGrowth={sp.fcGrowth ?? ""}
         currentSort={sortKey}
       />
 
@@ -167,9 +194,10 @@ export default async function ScreenerPage({
                   <tr>
                     <th className="text-left px-3 py-2 font-medium">銘柄</th>
                     <th className="text-left px-3 py-2 font-medium">業種</th>
-                    <th className="text-right px-3 py-2 font-medium">直近売上</th>
-                    <th className="text-right px-3 py-2 font-medium">売上YoY</th>
-                    <th className="text-right px-3 py-2 font-medium">純利益YoY</th>
+                    <th className="text-right px-3 py-2 font-medium whitespace-nowrap">直近売上</th>
+                    <th className="text-right px-3 py-2 font-medium whitespace-nowrap">売上YoY</th>
+                    <th className="text-right px-3 py-2 font-medium whitespace-nowrap">純利益YoY</th>
+                    <th className="text-right px-3 py-2 font-medium whitespace-nowrap">予想売上YoY</th>
                     <th className="text-left px-3 py-2 font-medium whitespace-nowrap">期末</th>
                   </tr>
                 </thead>
@@ -213,6 +241,17 @@ export default async function ScreenerPage({
                       >
                         {formatPercent(r.profitYoY)}
                       </td>
+                      <td
+                        className={`px-3 py-2 text-right tabular-nums ${
+                          (r.forecastSalesYoY ?? 0) > 0
+                            ? "text-emerald-600 dark:text-emerald-400"
+                            : (r.forecastSalesYoY ?? 0) < 0
+                              ? "text-red-600 dark:text-red-400"
+                              : ""
+                        }`}
+                      >
+                        {formatPercent(r.forecastSalesYoY)}
+                      </td>
                       <td className="px-3 py-2 text-xs text-neutral-500 whitespace-nowrap">
                         {r.fiscalYearEnd ?? "—"}
                       </td>
@@ -254,6 +293,12 @@ function PresetButtons() {
       desc: "純利益YoY ≥50%",
     },
     {
+      emoji: "🔮",
+      label: "予想加速",
+      href: "/screener?fcGrowth=15&sort=fcGrowth",
+      desc: "会社予想売上YoY ≥15%",
+    },
+    {
       emoji: "📊",
       label: "全銘柄",
       href: "/screener",
@@ -280,10 +325,12 @@ function PresetButtons() {
 function FilterForm({
   currentGrowth,
   currentProfit,
+  currentFcGrowth,
   currentSort,
 }: {
   currentGrowth: string;
   currentProfit: string;
+  currentFcGrowth: string;
   currentSort: string;
 }) {
   return (
@@ -293,7 +340,7 @@ function FilterForm({
       className="rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-neutral-900 p-5"
     >
       <h2 className="text-sm font-semibold mb-3">フィルタ</h2>
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div>
           <label htmlFor="growth" className="block text-xs font-medium mb-1.5 text-neutral-600 dark:text-neutral-400">
             売上YoY 最低 (%)
@@ -325,6 +372,21 @@ function FilterForm({
           <p className="text-xs text-neutral-500 mt-1">空欄でフィルタなし</p>
         </div>
         <div>
+          <label htmlFor="fcGrowth" className="block text-xs font-medium mb-1.5 text-neutral-600 dark:text-neutral-400">
+            予想売上YoY 最低 (%)
+          </label>
+          <input
+            type="number"
+            id="fcGrowth"
+            name="fcGrowth"
+            step="1"
+            defaultValue={currentFcGrowth}
+            placeholder="(無制限)"
+            className="w-full rounded-lg border border-black/15 dark:border-white/15 bg-white dark:bg-neutral-900 px-3 py-1.5 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-neutral-900 dark:focus:ring-white"
+          />
+          <p className="text-xs text-neutral-500 mt-1">会社予想ベース</p>
+        </div>
+        <div>
           <label htmlFor="sort" className="block text-xs font-medium mb-1.5 text-neutral-600 dark:text-neutral-400">
             並び順
           </label>
@@ -336,6 +398,7 @@ function FilterForm({
           >
             <option value="growth">売上YoY (高い順)</option>
             <option value="profit">純利益YoY (高い順)</option>
+            <option value="fcGrowth">予想売上YoY (高い順)</option>
             <option value="ticker">銘柄コード昇順</option>
           </select>
         </div>

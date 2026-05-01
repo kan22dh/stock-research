@@ -30,7 +30,8 @@ src/
       search.ts               # Stock search by code/name
       watchlist.ts            # Toggle watchlist
     api/
-      sync-financials/route.ts  # POST /api/sync-financials?limit=N&scale=small|mid|all
+      sync-financials/route.ts  # POST /api/sync-financials?limit=N&scale=small|mid|all[&only=missing-forecast]
+      screener-csv/route.ts     # GET /api/screener-csv?growth=N&profit=N (Excel-compatible UTF-8 BOM)
     stocks/[code]/
       page.tsx                # Stock detail dashboard
       not-found.tsx
@@ -40,22 +41,25 @@ src/
     macro/page.tsx
     compare/page.tsx          # /compare?codes=A,B
   components/
-    candle-chart.tsx          # Candlesticks + volume + MA20/MA50 + timeframe switcher
+    candle-chart.tsx          # Candlesticks + volume + MA20/MA50 + RSI(14) + timeframe switcher
     line-chart.tsx            # Area chart for FRED series
     stock-search.tsx          # Debounced search input
     watch-toggle.tsx          # ☆ button
     ai-analyze.tsx            # AI panel for single stock
     compare-ai.tsx            # AI panel for compare
-    bulk-sync-button.tsx      # "📊 50件取得" button on screener
+    auto-diagnose.tsx         # Rule-based tag commentary (no API needed)
+    bulk-sync-button.tsx      # "📊 30件取得" button on screener
     macro-snapshot.tsx        # Top-4 macro card grid for home
+    peer-comparison-table.tsx # Selected stock + peers in same comparison row
     top-growers.tsx           # Top-5 small-cap growers card list
     quota-card.tsx            # (reserved, not currently rendered)
   lib/
     db.ts                     # Prisma singleton
-    jquants.ts                # J-Quants v2 client + types + 429 retry
+    jquants.ts                # J-Quants v2 client + types + 429 retry (3s/8s backoff)
     fred.ts                   # FRED CSV downloader + series catalog
-    sync.ts                   # Cache-aware sync helpers
-    financial-metrics.ts      # extractAnnualSummaries, deriveMetrics, formatters
+    sync.ts                   # Cache-aware sync (financials + forecast in one pass)
+    financial-metrics.ts      # extractAnnualSummaries, extractLatestForecast, deriveMetrics, formatters
+    auto-diagnose.ts          # Rule-based stock diagnosis (no API needed)
     trade-schema.ts           # (legacy, unused — was for nisa-tracker)
     nisa-constants.ts         # (legacy)
     ai.ts                     # Anthropic client + analyzeStock prompt
@@ -69,13 +73,14 @@ prisma/
 - `ListedStock` — master, synced from `/v2/equities/master` (~4000 rows)
 - `PriceCache` — daily OHLCV per code, synced from `/v2/equities/bars/daily`
 - `FinancialCache` — annual financials per code/FY, synced from `/v2/fins/summary` filtered to `CurPerType="FY"`. Pre-computed `salesYoY`, `profitYoY`.
+- `Forecast` — latest company-issued forecast per code, extracted from F-prefix fields on most recent quarterly disclosure. Targets `CurFYEn` for 1Q/2Q/3Q rows, `NxtFYEn` for FY rows. Pre-computed `salesYoYImplied`, `profitYoYImplied` (vs latest actual FY).
 - `Watchlist`, `BrowseHistory`, `SyncLog`
 
 ## Sync TTLs
 
 - ListedStock: 24h
 - PriceCache: 6h
-- FinancialCache: 24h
+- FinancialCache + Forecast (synced together): 24h
 - FRED: 6h (Next.js fetch revalidate)
 
 ## J-Quants gotchas
