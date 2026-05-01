@@ -1,7 +1,7 @@
 import { prisma } from "./db";
 import { listedInfo, dailyQuotes, statements } from "./jquants";
 import { toShortCode } from "./stock-codes";
-import { extractAnnualSummaries } from "./financial-metrics";
+import { extractAnnualSummaries, extractLatestForecast } from "./financial-metrics";
 
 const LISTED_INFO_TTL_MS = 24 * 60 * 60 * 1000;
 const PRICES_TTL_MS = 6 * 60 * 60 * 1000;
@@ -159,17 +159,76 @@ export async function syncFinancialsIfStale(
     };
   });
 
-  if (records.length > 0) {
-    await prisma.$transaction([
-      prisma.financialCache.deleteMany({ where: { code } }),
-      prisma.financialCache.createMany({ data: records }),
-    ]);
+  // Latest forecast (separate table)
+  const forecast = extractLatestForecast(rows);
+  let forecastSalesYoY: number | null = null;
+  let forecastProfitYoY: number | null = null;
+  if (forecast) {
+    const latestActual = sorted[sorted.length - 1];
+    if (
+      forecast.netSales != null &&
+      latestActual?.netSales != null &&
+      latestActual.netSales !== 0
+    ) {
+      forecastSalesYoY =
+        ((forecast.netSales - latestActual.netSales) /
+          Math.abs(latestActual.netSales)) *
+        100;
+    }
+    if (
+      forecast.netIncome != null &&
+      latestActual?.netIncome != null &&
+      latestActual.netIncome !== 0
+    ) {
+      forecastProfitYoY =
+        ((forecast.netIncome - latestActual.netIncome) /
+          Math.abs(latestActual.netIncome)) *
+        100;
+    }
   }
+
+  await prisma.$transaction([
+    prisma.financialCache.deleteMany({ where: { code } }),
+    ...(records.length > 0
+      ? [prisma.financialCache.createMany({ data: records })]
+      : []),
+    prisma.forecast.deleteMany({ where: { code } }),
+    ...(forecast
+      ? [
+          prisma.forecast.create({
+            data: {
+              code,
+              forFiscalYearEnd: forecast.forFiscalYearEnd,
+              disclosedDate: forecast.disclosedDate,
+              netSales: forecast.netSales,
+              operatingProfit: forecast.operatingProfit,
+              ordinaryProfit: forecast.ordinaryProfit,
+              netIncome: forecast.netIncome,
+              eps: forecast.eps,
+              dividendAnnual: forecast.dividendAnnual,
+              salesYoYImplied: forecastSalesYoY,
+              profitYoYImplied: forecastProfitYoY,
+            },
+          }),
+        ]
+      : []),
+  ]);
 
   await prisma.syncLog.upsert({
     where: { key },
-    create: { key, payload: String(records.length) },
-    update: { payload: String(records.length) },
+    create: {
+      key,
+      payload: JSON.stringify({
+        annual: records.length,
+        forecast: forecast ? 1 : 0,
+      }),
+    },
+    update: {
+      payload: JSON.stringify({
+        annual: records.length,
+        forecast: forecast ? 1 : 0,
+      }),
+    },
   });
 
   return { count: records.length, refreshed: true };

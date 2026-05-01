@@ -1,5 +1,16 @@
 import type { StatementRow } from "./jquants";
 
+export type ForecastSummary = {
+  forFiscalYearEnd: string;
+  disclosedDate: string;
+  netSales: number | null;
+  operatingProfit: number | null;
+  ordinaryProfit: number | null;
+  netIncome: number | null;
+  eps: number | null;
+  dividendAnnual: number | null;
+};
+
 export type FiscalYearSummary = {
   fiscalYearEnd: string;
   netSales: number | null;
@@ -52,6 +63,48 @@ export function extractAnnualSummaries(rows: StatementRow[]): FiscalYearSummary[
     bookValuePerShare: num(r.BookValuePerShare),
     dividend: num(r.ResultDividendPerShareAnnual),
   }));
+}
+
+// Extract the most recent company-issued forecast.
+// J-Quants F-prefix fields target:
+//   - if CurPerType in {1Q, 2Q, 3Q}: CurFYEn (current fiscal year)
+//   - if CurPerType == FY: NxtFYEn (next fiscal year)
+// We pick the most recent disclosure that has any non-empty F-field.
+export function extractLatestForecast(
+  rows: StatementRow[],
+): ForecastSummary | null {
+  const sorted = [...rows].sort((a, b) =>
+    (b.DisclosedDate || "").localeCompare(a.DisclosedDate || ""),
+  );
+  for (const r of sorted) {
+    const target =
+      r.TypeOfCurrentPeriod === "FY"
+        ? r.NextFiscalYearEndDate ?? ""
+        : r.CurrentFiscalYearEndDate ?? "";
+    const hasForecast =
+      (r.ForecastNetSales && r.ForecastNetSales !== "") ||
+      (r.ForecastProfit && r.ForecastProfit !== "") ||
+      (r.ForecastEarningsPerShare && r.ForecastEarningsPerShare !== "");
+    if (hasForecast && target) {
+      return {
+        forFiscalYearEnd: target,
+        disclosedDate: r.DisclosedDate || "",
+        netSales: numStr(r.ForecastNetSales),
+        operatingProfit: numStr(r.ForecastOperatingProfit),
+        ordinaryProfit: numStr(r.ForecastOrdinaryProfit),
+        netIncome: numStr(r.ForecastProfit),
+        eps: numStr(r.ForecastEarningsPerShare),
+        dividendAnnual: numStr(r.ForecastDividendPerShareAnnual),
+      };
+    }
+  }
+  return null;
+}
+
+function numStr(v: string | undefined | null): number | null {
+  if (v == null || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
 }
 
 export type DerivedMetrics = {

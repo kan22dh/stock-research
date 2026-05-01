@@ -58,11 +58,14 @@ export default async function StockDetail({ params }: PageProps) {
     ),
   ]).then((r) => r[0]);
 
-  // Read financial data from cache. Background-refresh without blocking render.
-  const financialRows = await prisma.financialCache.findMany({
-    where: { code },
-    orderBy: { fiscalYearEnd: "asc" },
-  });
+  // Read financial data + forecast from cache. Background-refresh without blocking render.
+  const [financialRows, forecast] = await Promise.all([
+    prisma.financialCache.findMany({
+      where: { code },
+      orderBy: { fiscalYearEnd: "asc" },
+    }),
+    prisma.forecast.findUnique({ where: { code } }),
+  ]);
   syncFinancialsIfStale(code).catch(() => null);
 
   if (pricesResult.status === "rejected") {
@@ -132,7 +135,7 @@ export default async function StockDetail({ params }: PageProps) {
 
   const peerMetrics = await Promise.all(
     peers.map(async (p) => {
-      const [latestPriceRow, latestFin] = await Promise.all([
+      const [latestPriceRow, latestFin, peerForecast] = await Promise.all([
         prisma.priceCache.findFirst({
           where: { code: p.code },
           orderBy: { date: "desc" },
@@ -141,6 +144,7 @@ export default async function StockDetail({ params }: PageProps) {
           where: { code: p.code },
           orderBy: { fiscalYearEnd: "desc" },
         }),
+        prisma.forecast.findUnique({ where: { code: p.code } }),
       ]);
       const price = latestPriceRow?.close ?? null;
       const eps = latestFin?.eps ?? null;
@@ -166,6 +170,8 @@ export default async function StockDetail({ params }: PageProps) {
         salesYoY: latestFin?.salesYoY ?? null,
         profitYoY: latestFin?.profitYoY ?? null,
         equityRatio,
+        forecastSalesYoY: peerForecast?.salesYoYImplied ?? null,
+        forecastProfitYoY: peerForecast?.profitYoYImplied ?? null,
       } satisfies ComparisonRow;
     }),
   );
@@ -219,6 +225,8 @@ export default async function StockDetail({ params }: PageProps) {
     salesYoY: metrics.salesGrowthYoY,
     profitYoY: metrics.profitGrowthYoY,
     equityRatio: equityRatioSelf,
+    forecastSalesYoY: forecast?.salesYoYImplied ?? null,
+    forecastProfitYoY: forecast?.profitYoYImplied ?? null,
   };
   const sortedPeers = [...peerMetrics].sort((a, b) => {
     const av = a.salesYoY ?? Number.NEGATIVE_INFINITY;
@@ -350,6 +358,62 @@ export default async function StockDetail({ params }: PageProps) {
         <PeerComparisonTable rows={comparisonRows} sectorName={stock.sector33Name} />
       )}
 
+      {forecast && (
+        <section className="rounded-2xl border border-sky-200 dark:border-sky-900/50 bg-gradient-to-br from-sky-50 to-white dark:from-sky-950/30 dark:to-neutral-900 p-5">
+          <div className="flex items-baseline justify-between gap-2 flex-wrap mb-3">
+            <h2 className="text-sm font-semibold flex items-center gap-2">
+              <span className="text-sky-600 dark:text-sky-400">📈</span>
+              会社予想（{forecast.forFiscalYearEnd} 期）
+            </h2>
+            <span className="text-xs text-neutral-500">
+              開示日: {forecast.disclosedDate}
+            </span>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <ForecastCell label="予想売上" value={forecast.netSales} kind="yen-compact" />
+            <ForecastCell label="予想営業利益" value={forecast.operatingProfit} kind="yen-compact" />
+            <ForecastCell label="予想純利益" value={forecast.netIncome} kind="yen-compact" />
+            <ForecastCell label="予想EPS" value={forecast.eps} kind="yen-per-share" />
+          </div>
+          {(forecast.salesYoYImplied != null || forecast.profitYoYImplied != null) && (
+            <div className="mt-4 pt-4 border-t border-sky-200/60 dark:border-sky-900/30 grid grid-cols-2 gap-3 text-sm">
+              <div>
+                <div className="text-xs text-neutral-500">予想売上YoY (vs 直近通期)</div>
+                <div
+                  className={`text-lg font-bold tabular-nums mt-0.5 ${
+                    (forecast.salesYoYImplied ?? 0) > 0
+                      ? "text-emerald-600 dark:text-emerald-400"
+                      : (forecast.salesYoYImplied ?? 0) < 0
+                        ? "text-red-600 dark:text-red-400"
+                        : ""
+                  }`}
+                >
+                  {forecast.salesYoYImplied != null
+                    ? `${forecast.salesYoYImplied > 0 ? "+" : ""}${forecast.salesYoYImplied.toFixed(2)}%`
+                    : "—"}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-neutral-500">予想純利益YoY (vs 直近通期)</div>
+                <div
+                  className={`text-lg font-bold tabular-nums mt-0.5 ${
+                    (forecast.profitYoYImplied ?? 0) > 0
+                      ? "text-emerald-600 dark:text-emerald-400"
+                      : (forecast.profitYoYImplied ?? 0) < 0
+                        ? "text-red-600 dark:text-red-400"
+                        : ""
+                  }`}
+                >
+                  {forecast.profitYoYImplied != null
+                    ? `${forecast.profitYoYImplied > 0 ? "+" : ""}${forecast.profitYoYImplied.toFixed(2)}%`
+                    : "—"}
+                </div>
+              </div>
+            </div>
+          )}
+        </section>
+      )}
+
       {annualSummaries.length > 0 && (
         <section className="rounded-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-neutral-900 p-5">
           <h2 className="text-sm font-semibold mb-3">業績推移（通期）</h2>
@@ -409,6 +473,31 @@ export default async function StockDetail({ params }: PageProps) {
         </div>
       )}
 
+    </div>
+  );
+}
+
+function ForecastCell({
+  label,
+  value,
+  kind,
+}: {
+  label: string;
+  value: number | null;
+  kind: "yen-compact" | "yen-per-share";
+}) {
+  let text = "—";
+  if (value != null) {
+    if (kind === "yen-compact") {
+      text = formatYen(value, { compact: true });
+    } else {
+      text = `${value.toFixed(2)}円`;
+    }
+  }
+  return (
+    <div className="rounded-lg bg-white/60 dark:bg-neutral-900/40 border border-sky-100 dark:border-sky-900/30 px-3 py-2">
+      <div className="text-xs text-neutral-500">{label}</div>
+      <div className="text-lg font-bold tabular-nums mt-0.5">{text}</div>
     </div>
   );
 }

@@ -139,6 +139,8 @@ export type StatementRow = {
   CurrentPeriodEndDate: string;
   CurrentFiscalYearStartDate: string;
   CurrentFiscalYearEndDate: string;
+  NextFiscalYearStartDate?: string;
+  NextFiscalYearEndDate?: string;
   NetSales?: string;
   OperatingProfit?: string;
   OrdinaryProfit?: string;
@@ -149,6 +151,13 @@ export type StatementRow = {
   EquityToAssetRatio?: string;
   BookValuePerShare?: string;
   ResultDividendPerShareAnnual?: string;
+  // Forecasts (F-prefix in v2; consolidated, full-year)
+  ForecastNetSales?: string;
+  ForecastOperatingProfit?: string;
+  ForecastOrdinaryProfit?: string;
+  ForecastProfit?: string;
+  ForecastEarningsPerShare?: string;
+  ForecastDividendPerShareAnnual?: string;
 };
 
 // ---------- Mappers (v2 short keys → internal long keys) ----------
@@ -213,6 +222,8 @@ function mapStatement(r: Record<string, unknown>): StatementRow {
     CurrentPeriodEndDate: pickStr(r, "CurPerEn") ?? "",
     CurrentFiscalYearStartDate: pickStr(r, "CurFYSt") ?? "",
     CurrentFiscalYearEndDate: pickStr(r, "CurFYEn") ?? "",
+    NextFiscalYearStartDate: pickStr(r, "NxtFYSt"),
+    NextFiscalYearEndDate: pickStr(r, "NxtFYEn"),
     NetSales: pickStr(r, "Sales"),
     OperatingProfit: pickStr(r, "OP"),
     OrdinaryProfit: pickStr(r, "OdP"),
@@ -223,6 +234,12 @@ function mapStatement(r: Record<string, unknown>): StatementRow {
     EquityToAssetRatio: pickStr(r, "EqAR"),
     BookValuePerShare: pickStr(r, "BPS"),
     ResultDividendPerShareAnnual: pickStr(r, "DivAnn"),
+    ForecastNetSales: pickStr(r, "FSales"),
+    ForecastOperatingProfit: pickStr(r, "FOP"),
+    ForecastOrdinaryProfit: pickStr(r, "FOdP"),
+    ForecastProfit: pickStr(r, "FNP"),
+    ForecastEarningsPerShare: pickStr(r, "FEPS"),
+    ForecastDividendPerShareAnnual: pickStr(r, "FDivAnn"),
   };
 }
 

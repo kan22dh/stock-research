@@ -27,6 +27,7 @@ model ListedStock {
   prices     PriceCache[]
   watchItems Watchlist[]
   financials FinancialCache[]
+  forecast   Forecast?
   history    BrowseHistory[]
 
   @@index([ticker])
@@ -66,6 +67,26 @@ model BrowseHistory {
   stock ListedStock @relation(fields: [code], references: [code], onDelete: Cascade)
 
   @@index([lastViewed])
+}
+
+// Latest company-issued forecast (1 row per code, replaced on each sync)
+// Source: J-Quants /fins/summary F-prefix fields on most recent quarterly disclosure
+model Forecast {
+  code               String   @id
+  forFiscalYearEnd   String   // YYYY-MM-DD that the forecast targets
+  disclosedDate      String   // YYYY-MM-DD when forecast was issued
+  netSales           Float?
+  operatingProfit    Float?
+  ordinaryProfit     Float?
+  netIncome          Float?
+  eps                Float?
+  dividendAnnual     Float?
+  // Implied YoY vs the most recent actual FY
+  salesYoYImplied    Float?
+  profitYoYImplied   Float?
+  updatedAt          DateTime @updatedAt
+
+  stock ListedStock @relation(fields: [code], references: [code], onDelete: Cascade)
 }
 
 // Annual financial cache (for screening; 1 row per code+fiscal-year-end)

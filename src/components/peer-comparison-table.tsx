@@ -10,9 +10,11 @@ export type ComparisonRow = {
   per: number | null;
   pbr: number | null;
   roe: number | null;          // %
-  salesYoY: number | null;     // %
+  salesYoY: number | null;     // % (actual prior year YoY)
   profitYoY: number | null;    // %
   equityRatio: number | null;  // % (already in 0-100)
+  forecastSalesYoY: number | null;  // % (company guidance vs prior actual FY)
+  forecastProfitYoY: number | null; // %
 };
 
 type Props = {
@@ -45,6 +47,8 @@ export function PeerComparisonTable({ rows, sectorName }: Props) {
               <th className="text-right px-3 py-2 font-medium whitespace-nowrap">ROE</th>
               <th className="text-right px-3 py-2 font-medium whitespace-nowrap">売上YoY</th>
               <th className="text-right px-3 py-2 font-medium whitespace-nowrap">純利益YoY</th>
+              <th className="text-right px-3 py-2 font-medium whitespace-nowrap" title="会社予想 売上YoY">予想売上YoY</th>
+              <th className="text-right px-3 py-2 font-medium whitespace-nowrap" title="会社予想 純利益YoY">予想利益YoY</th>
               <th className="text-right px-3 py-2 font-medium whitespace-nowrap">自己資本比率</th>
             </tr>
           </thead>
@@ -102,6 +106,20 @@ function Row({ row }: { row: ComparisonRow }) {
       >
         {row.profitYoY != null
           ? `${row.profitYoY > 0 ? "+" : ""}${row.profitYoY.toFixed(1)}%`
+          : "—"}
+      </td>
+      <td
+        className={`px-3 py-2.5 text-right tabular-nums whitespace-nowrap ${growthClass(row.forecastSalesYoY)}`}
+      >
+        {row.forecastSalesYoY != null
+          ? `${row.forecastSalesYoY > 0 ? "+" : ""}${row.forecastSalesYoY.toFixed(1)}%`
+          : "—"}
+      </td>
+      <td
+        className={`px-3 py-2.5 text-right tabular-nums whitespace-nowrap ${growthClass(row.forecastProfitYoY)}`}
+      >
+        {row.forecastProfitYoY != null
+          ? `${row.forecastProfitYoY > 0 ? "+" : ""}${row.forecastProfitYoY.toFixed(1)}%`
           : "—"}
       </td>
       <td className="px-3 py-2.5 text-right tabular-nums whitespace-nowrap">
