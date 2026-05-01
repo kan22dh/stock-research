@@ -43,14 +43,18 @@ src/
   components/
     candle-chart.tsx          # Candlesticks + volume + MA20/MA50 + RSI(14) + timeframe switcher
     line-chart.tsx            # Area chart for FRED series
-    stock-search.tsx          # Debounced search input
+    stock-search.tsx          # Debounced search input + keyboard nav (↑↓ Enter)
     watch-toggle.tsx          # ☆ button
     ai-analyze.tsx            # AI panel for single stock
     compare-ai.tsx            # AI panel for compare
     auto-diagnose.tsx         # Rule-based tag commentary (no API needed)
+    investment-score-card.tsx # ⭐ 0-100 composite score with breakdown bars
     bulk-sync-button.tsx      # "📊 30件取得" button on screener
     macro-snapshot.tsx        # Top-4 macro card grid for home
     peer-comparison-table.tsx # Selected stock + peers in same comparison row
+    top-growers.tsx           # Home widget: top 5 small caps by sales YoY
+    top-by-score.tsx          # Home widget: top 5 by investment score
+    forecast-accelerators.tsx # Home widget: forecast YoY > actual YoY ranking
     top-growers.tsx           # Top-5 small-cap growers card list
     quota-card.tsx            # (reserved, not currently rendered)
   lib/
@@ -60,6 +64,7 @@ src/
     sync.ts                   # Cache-aware sync (financials + forecast in one pass)
     financial-metrics.ts      # extractAnnualSummaries, extractLatestForecast, deriveMetrics, formatters
     auto-diagnose.ts          # Rule-based stock diagnosis (no API needed)
+    investment-score.ts       # Composite 0-100 score (Growth+Quality+Value+Stability+Acceleration)
     trade-schema.ts           # (legacy, unused — was for nisa-tracker)
     nisa-constants.ts         # (legacy)
     ai.ts                     # Anthropic client + analyzeStock prompt
