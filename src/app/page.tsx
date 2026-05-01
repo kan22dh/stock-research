@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { StockSearch } from "@/components/stock-search";
 import { MacroSnapshot } from "@/components/macro-snapshot";
 import { TopGrowers } from "@/components/top-growers";
+import { ForecastAccelerators } from "@/components/forecast-accelerators";
 
 const EXAMPLE_STOCKS = [
   { code: "72030", name: "トヨタ自動車", note: "大型・自動車" },
@@ -49,6 +50,10 @@ export default async function Home() {
 
       <Suspense fallback={null}>
         <TopGrowers />
+      </Suspense>
+
+      <Suspense fallback={null}>
+        <ForecastAccelerators />
       </Suspense>
 
       {history.length > 0 && (
