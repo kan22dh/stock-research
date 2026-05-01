@@ -15,17 +15,49 @@ export async function bulkSyncFinancials(
   if (codes && codes.length > 0) {
     targetCodes = codes;
   } else {
-    // Fetch small caps that don't yet have cached financials, in ticker order.
-    const smalls = await prisma.listedStock.findMany({
-      where: {
-        scaleCategory: { in: ["TOPIX Small 1", "TOPIX Small 2"] },
-        financials: { none: {} },
-      },
-      select: { code: true },
-      take: 30, // 30 * 6s ≈ 3 min per click (within reasonable wait)
-      orderBy: { ticker: "asc" },
+    // Priority order: watchlist > browse history > untouched small caps
+    const watchlist = await prisma.watchlist.findMany({
+      include: { stock: { include: { financials: { take: 1 } } } },
     });
-    targetCodes = smalls.map((s) => s.code);
+    const watchlistMissing = watchlist
+      .filter((w) => w.stock.financials.length === 0)
+      .map((w) => w.code);
+
+    const history = await prisma.browseHistory.findMany({
+      orderBy: { lastViewed: "desc" },
+      take: 20,
+      include: { stock: { include: { financials: { take: 1 } } } },
+    });
+    const historyMissing = history
+      .filter((h) => h.stock.financials.length === 0)
+      .map((h) => h.code);
+
+    const collected = new Set<string>();
+    const ordered: string[] = [];
+    for (const c of [...watchlistMissing, ...historyMissing]) {
+      if (!collected.has(c)) {
+        ordered.push(c);
+        collected.add(c);
+      }
+    }
+
+    const remaining = 30 - ordered.length;
+    if (remaining > 0) {
+      const smalls = await prisma.listedStock.findMany({
+        where: {
+          scaleCategory: { in: ["TOPIX Small 1", "TOPIX Small 2"] },
+          financials: { none: {} },
+          code: { notIn: Array.from(collected) },
+        },
+        select: { code: true },
+        take: remaining,
+        orderBy: { ticker: "asc" },
+      });
+      for (const s of smalls) {
+        ordered.push(s.code);
+      }
+    }
+    targetCodes = ordered.slice(0, 30);
   }
 
   let synced = 0;

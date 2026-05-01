@@ -43,11 +43,37 @@ function sma(values: number[], window: number): Array<number | null> {
   return out;
 }
 
+function rsi(closes: number[], period = 14): Array<number | null> {
+  const out: Array<number | null> = new Array(closes.length).fill(null);
+  if (closes.length < period + 1) return out;
+  let gainSum = 0;
+  let lossSum = 0;
+  for (let i = 1; i <= period; i++) {
+    const diff = closes[i] - closes[i - 1];
+    if (diff >= 0) gainSum += diff;
+    else lossSum += -diff;
+  }
+  let avgGain = gainSum / period;
+  let avgLoss = lossSum / period;
+  out[period] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+  for (let i = period + 1; i < closes.length; i++) {
+    const diff = closes[i] - closes[i - 1];
+    const gain = diff > 0 ? diff : 0;
+    const loss = diff < 0 ? -diff : 0;
+    avgGain = (avgGain * (period - 1) + gain) / period;
+    avgLoss = (avgLoss * (period - 1) + loss) / period;
+    out[i] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+  }
+  return out;
+}
+
 export function CandleChart({ data }: { data: CandlePoint[] }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const rsiContainerRef = useRef<HTMLDivElement>(null);
   const [timeframe, setTimeframe] = useState<TimeframeId>("1Y");
   const [showMA20, setShowMA20] = useState(true);
   const [showMA50, setShowMA50] = useState(true);
+  const [showRSI, setShowRSI] = useState(false);
 
   const filtered = useMemo(() => {
     const tf = TIMEFRAMES.find((t) => t.id === timeframe);
@@ -171,6 +197,77 @@ export function CandleChart({ data }: { data: CandlePoint[] }) {
     };
   }, [filtered, showMA20, showMA50]);
 
+  // Separate small chart for RSI (toggled)
+  useEffect(() => {
+    if (!showRSI || !rsiContainerRef.current || filtered.length === 0) return;
+    const isDark = window.matchMedia?.("(prefers-color-scheme: dark)").matches;
+    const chart = createChart(rsiContainerRef.current, {
+      width: rsiContainerRef.current.clientWidth,
+      height: 120,
+      layout: {
+        background: { color: "transparent" },
+        textColor: isDark ? "#a3a3a3" : "#525252",
+        fontSize: 10,
+      },
+      grid: {
+        vertLines: { color: isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.04)" },
+        horzLines: { color: isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.04)" },
+      },
+      rightPriceScale: {
+        borderColor: isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)",
+      },
+      timeScale: {
+        borderColor: isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)",
+        timeVisible: false,
+      },
+    });
+    const series = chart.addSeries(LineSeries, {
+      color: "#f59e0b",
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: true,
+      title: "RSI(14)",
+    });
+    const closes = filtered.map((d) => d.close);
+    const r = rsi(closes, 14);
+    const lineData: LineData[] = r
+      .map((v, i) =>
+        v != null ? { time: filtered[i].time as Time, value: v } : null,
+      )
+      .filter((v): v is LineData => v !== null);
+    series.setData(lineData);
+
+    // Overbought/oversold horizontal lines
+    series.createPriceLine({
+      price: 70,
+      color: "#dc2626",
+      lineStyle: 2,
+      lineWidth: 1,
+      axisLabelVisible: false,
+      title: "70",
+    });
+    series.createPriceLine({
+      price: 30,
+      color: "#16a34a",
+      lineStyle: 2,
+      lineWidth: 1,
+      axisLabelVisible: false,
+      title: "30",
+    });
+
+    chart.timeScale().fitContent();
+    const ro = new ResizeObserver(() => {
+      if (rsiContainerRef.current) {
+        chart.applyOptions({ width: rsiContainerRef.current.clientWidth });
+      }
+    });
+    ro.observe(rsiContainerRef.current);
+    return () => {
+      ro.disconnect();
+      chart.remove();
+    };
+  }, [filtered, showRSI]);
+
   if (data.length === 0) {
     return (
       <div className="h-[460px] flex items-center justify-center text-sm text-neutral-500 border border-dashed rounded-xl">
@@ -217,9 +314,26 @@ export function CandleChart({ data }: { data: CandlePoint[] }) {
             />
             <span className="text-purple-500 font-medium">MA50</span>
           </label>
+          <label className="flex items-center gap-1.5 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={showRSI}
+              onChange={(e) => setShowRSI(e.target.checked)}
+              className="accent-amber-500"
+            />
+            <span className="text-amber-500 font-medium">RSI</span>
+          </label>
         </div>
       </div>
       <div ref={containerRef} className="w-full" />
+      {showRSI && (
+        <div className="pt-1 border-t border-black/5 dark:border-white/5">
+          <div className="text-xs text-neutral-500 px-1 pb-1">
+            RSI(14): &lt;30 売られすぎ / &gt;70 買われすぎ
+          </div>
+          <div ref={rsiContainerRef} className="w-full" />
+        </div>
+      )}
     </div>
   );
 }

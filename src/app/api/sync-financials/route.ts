@@ -25,15 +25,27 @@ export async function POST(req: Request) {
           ? undefined
           : { in: ["TOPIX Small 1", "TOPIX Small 2"] };
 
-  const stocks = await prisma.listedStock.findMany({
-    where: {
-      ...(scaleFilter ? { scaleCategory: scaleFilter } : {}),
-      financials: { none: {} },
-    },
-    select: { code: true },
-    take: limit,
-    orderBy: { ticker: "asc" },
-  });
+  const onlyMissing = url.searchParams.get("only") !== "missing-forecast";
+  const stocks = onlyMissing
+    ? await prisma.listedStock.findMany({
+        where: {
+          ...(scaleFilter ? { scaleCategory: scaleFilter } : {}),
+          financials: { none: {} },
+        },
+        select: { code: true },
+        take: limit,
+        orderBy: { ticker: "asc" },
+      })
+    : await prisma.listedStock.findMany({
+        where: {
+          ...(scaleFilter ? { scaleCategory: scaleFilter } : {}),
+          financials: { some: {} },
+          forecast: null,
+        },
+        select: { code: true },
+        take: limit,
+        orderBy: { ticker: "asc" },
+      });
 
   let synced = 0;
   let failed = 0;

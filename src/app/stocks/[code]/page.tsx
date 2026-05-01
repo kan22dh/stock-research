@@ -16,6 +16,7 @@ import {
 import { CandleChart, type CandlePoint } from "@/components/candle-chart";
 import { WatchToggle } from "@/components/watch-toggle";
 import { AiAnalyze } from "@/components/ai-analyze";
+import { AutoDiagnose } from "@/components/auto-diagnose";
 import {
   PeerComparisonTable,
   type ComparisonRow,
@@ -235,6 +236,27 @@ export default async function StockDetail({ params }: PageProps) {
   });
   const comparisonRows: ComparisonRow[] = [selfRow, ...sortedPeers];
 
+  // Discovery: small-cap stocks with HIGHER sales YoY than current stock (or >0)
+  const ownYoY = metrics.salesGrowthYoY ?? 0;
+  const discoveryRaw = await prisma.financialCache.findMany({
+    where: {
+      salesYoY: { gt: ownYoY },
+      code: { not: code },
+      stock: {
+        scaleCategory: { in: ["TOPIX Small 1", "TOPIX Small 2"] },
+      },
+    },
+    orderBy: { salesYoY: "desc" },
+    take: 5,
+    include: { stock: true },
+  });
+  const discoveryWithForecasts = await Promise.all(
+    discoveryRaw.map(async (d) => {
+      const fc = await prisma.forecast.findUnique({ where: { code: d.code } });
+      return { ...d, forecast: fc };
+    }),
+  );
+
   return (
     <div className="space-y-6">
       <header className="flex items-start justify-between gap-4 flex-wrap">
@@ -332,6 +354,24 @@ export default async function StockDetail({ params }: PageProps) {
         <CandleChart data={candleData} />
       </section>
 
+      <AutoDiagnose
+        input={{
+          scaleCategory: stock.scaleCategory,
+          per: metrics.per,
+          pbr: metrics.pbr,
+          roe: metrics.roe,
+          salesYoY: metrics.salesGrowthYoY,
+          profitYoY: metrics.profitGrowthYoY,
+          forecastSalesYoY: forecast?.salesYoYImplied ?? null,
+          forecastProfitYoY: forecast?.profitYoYImplied ?? null,
+          equityRatio: equityRatioSelf,
+          ret1M,
+          ret3M,
+          ret1Y,
+          rangePosition: positionInRange,
+        }}
+      />
+
       <AiAnalyze code={code} aiEnabled={isAiEnabled()} />
 
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -356,6 +396,53 @@ export default async function StockDetail({ params }: PageProps) {
 
       {peers.length > 0 && (
         <PeerComparisonTable rows={comparisonRows} sectorName={stock.sector33Name} />
+      )}
+
+      {discoveryWithForecasts.length > 0 && (
+        <section className="rounded-2xl border border-emerald-200 dark:border-emerald-900/50 bg-gradient-to-br from-emerald-50 to-white dark:from-emerald-950/30 dark:to-neutral-900 p-5">
+          <div className="flex items-baseline justify-between gap-2 flex-wrap mb-3">
+            <h2 className="text-sm font-semibold flex items-center gap-2">
+              <span className="text-emerald-600 dark:text-emerald-400">🌱</span>
+              この銘柄より成長率が高い小型株（発掘候補）
+            </h2>
+            <span className="text-xs text-neutral-500">
+              現在の売上YoY {ownYoY > 0 ? "+" : ""}
+              {ownYoY.toFixed(1)}% 超
+            </span>
+          </div>
+          <ul className="space-y-1">
+            {discoveryWithForecasts.map((d) => (
+              <li key={d.code}>
+                <a
+                  href={`/stocks/${d.code}`}
+                  className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg hover:bg-white/60 dark:hover:bg-neutral-900/40 transition text-sm"
+                >
+                  <span className="min-w-0 flex items-center gap-2 flex-1">
+                    <span className="font-mono text-neutral-500 shrink-0">
+                      {d.stock.ticker}
+                    </span>
+                    <span className="truncate font-medium">{d.stock.name}</span>
+                    <span className="text-xs text-neutral-500 shrink-0 hidden sm:inline">
+                      {d.stock.sector33Name}
+                    </span>
+                  </span>
+                  <span className="flex items-center gap-3 shrink-0">
+                    <span className="text-xs text-neutral-500 hidden md:inline tabular-nums">
+                      予想{d.forecast?.salesYoYImplied != null
+                        ? `${d.forecast.salesYoYImplied > 0 ? "+" : ""}${d.forecast.salesYoYImplied.toFixed(1)}%`
+                        : "—"}
+                    </span>
+                    {d.salesYoY != null && (
+                      <span className="text-emerald-600 dark:text-emerald-400 font-bold tabular-nums">
+                        +{d.salesYoY.toFixed(1)}%
+                      </span>
+                    )}
+                  </span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
 
       {forecast && (
