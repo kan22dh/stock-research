@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { prisma } from "@/lib/db";
-import { formatYen } from "@/lib/financial-metrics";
 
 // Stocks where company forecast YoY > current actual YoY = acceleration expected.
 // Limit to small-caps for the user's target.

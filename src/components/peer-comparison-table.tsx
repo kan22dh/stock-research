@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { investmentScore } from "@/lib/investment-score";
 
 export type ComparisonRow = {
   code: string;
@@ -41,6 +42,7 @@ export function PeerComparisonTable({ rows, sectorName }: Props) {
           <thead className="text-neutral-500 border-b border-black/10 dark:border-white/10">
             <tr>
               <th className="text-left px-3 py-2 font-medium">銘柄</th>
+              <th className="text-right px-3 py-2 font-medium whitespace-nowrap" title="投資魅力スコア (0-100)">⭐スコア</th>
               <th className="text-right px-3 py-2 font-medium whitespace-nowrap">株価</th>
               <th className="text-right px-3 py-2 font-medium whitespace-nowrap">PER</th>
               <th className="text-right px-3 py-2 font-medium whitespace-nowrap">PBR</th>
@@ -68,6 +70,14 @@ function Row({ row }: { row: ComparisonRow }) {
     ? "bg-amber-50 dark:bg-amber-950/30 font-semibold"
     : "hover:bg-neutral-50 dark:hover:bg-neutral-800/30";
 
+  const score = investmentScore({
+    salesYoY: row.salesYoY,
+    roe: row.roe,
+    per: row.per,
+    equityRatio: row.equityRatio,
+    forecastSalesYoY: row.forecastSalesYoY,
+  });
+
   return (
     <tr className={rowClass}>
       <td className="px-3 py-2.5">
@@ -81,6 +91,19 @@ function Row({ row }: { row: ComparisonRow }) {
           <span className="font-mono text-neutral-500 shrink-0">{row.ticker}</span>
           <span className="truncate">{row.name}</span>
         </Link>
+      </td>
+      <td
+        className={`px-3 py-2.5 text-right tabular-nums whitespace-nowrap font-semibold ${
+          score == null
+            ? ""
+            : score.total >= 70
+              ? "text-emerald-600 dark:text-emerald-400"
+              : score.total >= 50
+                ? "text-amber-600 dark:text-amber-400"
+                : "text-neutral-500"
+        }`}
+      >
+        {score != null ? score.total.toFixed(0) : "—"}
       </td>
       <td className="px-3 py-2.5 text-right tabular-nums whitespace-nowrap">
         {row.latestPrice != null ? `${row.latestPrice.toLocaleString("ja-JP")}円` : "—"}

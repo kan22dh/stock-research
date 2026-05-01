@@ -17,6 +17,7 @@ import { CandleChart, type CandlePoint } from "@/components/candle-chart";
 import { WatchToggle } from "@/components/watch-toggle";
 import { AiAnalyze } from "@/components/ai-analyze";
 import { AutoDiagnose } from "@/components/auto-diagnose";
+import { InvestmentScoreCard } from "@/components/investment-score-card";
 import {
   PeerComparisonTable,
   type ComparisonRow,
@@ -354,23 +355,34 @@ export default async function StockDetail({ params }: PageProps) {
         <CandleChart data={candleData} />
       </section>
 
-      <AutoDiagnose
-        input={{
-          scaleCategory: stock.scaleCategory,
-          per: metrics.per,
-          pbr: metrics.pbr,
-          roe: metrics.roe,
-          salesYoY: metrics.salesGrowthYoY,
-          profitYoY: metrics.profitGrowthYoY,
-          forecastSalesYoY: forecast?.salesYoYImplied ?? null,
-          forecastProfitYoY: forecast?.profitYoYImplied ?? null,
-          equityRatio: equityRatioSelf,
-          ret1M,
-          ret3M,
-          ret1Y,
-          rangePosition: positionInRange,
-        }}
-      />
+      <div className="grid gap-4 lg:grid-cols-2">
+        <InvestmentScoreCard
+          input={{
+            salesYoY: metrics.salesGrowthYoY,
+            roe: metrics.roe,
+            per: metrics.per,
+            equityRatio: equityRatioSelf,
+            forecastSalesYoY: forecast?.salesYoYImplied ?? null,
+          }}
+        />
+        <AutoDiagnose
+          input={{
+            scaleCategory: stock.scaleCategory,
+            per: metrics.per,
+            pbr: metrics.pbr,
+            roe: metrics.roe,
+            salesYoY: metrics.salesGrowthYoY,
+            profitYoY: metrics.profitGrowthYoY,
+            forecastSalesYoY: forecast?.salesYoYImplied ?? null,
+            forecastProfitYoY: forecast?.profitYoYImplied ?? null,
+            equityRatio: equityRatioSelf,
+            ret1M,
+            ret3M,
+            ret1Y,
+            rangePosition: positionInRange,
+          }}
+        />
+      </div>
 
       <AiAnalyze code={code} aiEnabled={isAiEnabled()} />
 

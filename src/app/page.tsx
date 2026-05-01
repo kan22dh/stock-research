@@ -5,6 +5,7 @@ import { StockSearch } from "@/components/stock-search";
 import { MacroSnapshot } from "@/components/macro-snapshot";
 import { TopGrowers } from "@/components/top-growers";
 import { ForecastAccelerators } from "@/components/forecast-accelerators";
+import { TopByScore } from "@/components/top-by-score";
 
 const EXAMPLE_STOCKS = [
   { code: "72030", name: "トヨタ自動車", note: "大型・自動車" },
@@ -46,6 +47,10 @@ export default async function Home() {
 
       <Suspense fallback={null}>
         <MacroSnapshot />
+      </Suspense>
+
+      <Suspense fallback={null}>
+        <TopByScore />
       </Suspense>
 
       <Suspense fallback={null}>

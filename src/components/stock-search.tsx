@@ -1,14 +1,17 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { searchStocks, type StockSearchResult } from "@/app/actions/search";
 
 export function StockSearch() {
+  const router = useRouter();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<StockSearchResult[]>([]);
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [highlightedIndex, setHighlightedIndex] = useState(0);
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -19,6 +22,7 @@ export function StockSearch() {
         try {
           const r = await searchStocks(query);
           setResults(r);
+          setHighlightedIndex(0);
           setError(null);
         } catch (e) {
           setError(e instanceof Error ? e.message : "検索エラー");
@@ -40,12 +44,27 @@ export function StockSearch() {
           onChange={(e) => {
             const v = e.target.value;
             setQuery(v);
+            setHighlightedIndex(0);
             if (v.trim() === "") {
               setResults([]);
               setError(null);
             }
           }}
-          placeholder="銘柄コード（例: 7203）または銘柄名で検索"
+          onKeyDown={(e) => {
+            if (results.length === 0) return;
+            if (e.key === "ArrowDown") {
+              e.preventDefault();
+              setHighlightedIndex((i) => Math.min(i + 1, results.length - 1));
+            } else if (e.key === "ArrowUp") {
+              e.preventDefault();
+              setHighlightedIndex((i) => Math.max(i - 1, 0));
+            } else if (e.key === "Enter") {
+              e.preventDefault();
+              const r = results[highlightedIndex];
+              if (r) router.push(`/stocks/${r.code}`);
+            }
+          }}
+          placeholder="銘柄コード（例: 7203）または銘柄名で検索 (↑↓Enter)"
           className="w-full rounded-xl border border-black/15 dark:border-white/15 bg-white dark:bg-neutral-900 px-4 py-3 text-base focus:outline-none focus:ring-2 focus:ring-neutral-900 dark:focus:ring-white"
           autoFocus
         />
@@ -78,11 +97,16 @@ export function StockSearch() {
 
       {results.length > 0 && (
         <ul className="rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-neutral-900 divide-y divide-black/5 dark:divide-white/5 overflow-hidden">
-          {results.map((r) => (
+          {results.map((r, i) => (
             <li key={r.code}>
               <Link
                 href={`/stocks/${r.code}`}
-                className="flex items-center justify-between gap-4 px-4 py-3 hover:bg-neutral-50 dark:hover:bg-neutral-800/50 transition"
+                className={`flex items-center justify-between gap-4 px-4 py-3 transition ${
+                  i === highlightedIndex
+                    ? "bg-neutral-100 dark:bg-neutral-800"
+                    : "hover:bg-neutral-50 dark:hover:bg-neutral-800/50"
+                }`}
+                onMouseEnter={() => setHighlightedIndex(i)}
               >
                 <div className="min-w-0">
                   <div className="font-medium truncate">
