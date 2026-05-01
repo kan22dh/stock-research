@@ -16,6 +16,10 @@ import {
 import { CandleChart, type CandlePoint } from "@/components/candle-chart";
 import { WatchToggle } from "@/components/watch-toggle";
 import { AiAnalyze } from "@/components/ai-analyze";
+import {
+  PeerComparisonTable,
+  type ComparisonRow,
+} from "@/components/peer-comparison-table";
 import { isAiEnabled } from "@/lib/ai";
 
 type PageProps = {
@@ -95,18 +99,76 @@ export default async function StockDetail({ params }: PageProps) {
 
   const isWatched = (await prisma.watchlist.findUnique({ where: { code } })) != null;
 
-  // Same-sector peers (up to 8)
+  // Same-sector peers (up to 8). Prefer the same scale category to avoid
+  // mixing megacaps with micro-caps; fall back to other scales as needed.
   const peers = stock.sector33Code
-    ? await prisma.listedStock.findMany({
-        where: {
-          sector33Code: stock.sector33Code,
-          code: { not: code },
-          scaleCategory: { not: null },
-        },
-        take: 8,
-        orderBy: { ticker: "asc" },
-      })
+    ? await (async () => {
+        const wantedSize = 8;
+        const sameScale = stock.scaleCategory
+          ? await prisma.listedStock.findMany({
+              where: {
+                sector33Code: stock.sector33Code,
+                scaleCategory: stock.scaleCategory,
+                code: { not: code },
+              },
+              take: wantedSize,
+              orderBy: { ticker: "asc" },
+            })
+          : [];
+        if (sameScale.length >= wantedSize) return sameScale;
+        const fillerNeeded = wantedSize - sameScale.length;
+        const filler = await prisma.listedStock.findMany({
+          where: {
+            sector33Code: stock.sector33Code,
+            scaleCategory: { not: null },
+            code: { notIn: [code, ...sameScale.map((s) => s.code)] },
+          },
+          take: fillerNeeded,
+          orderBy: { ticker: "asc" },
+        });
+        return [...sameScale, ...filler];
+      })()
     : [];
+
+  const peerMetrics = await Promise.all(
+    peers.map(async (p) => {
+      const [latestPriceRow, latestFin] = await Promise.all([
+        prisma.priceCache.findFirst({
+          where: { code: p.code },
+          orderBy: { date: "desc" },
+        }),
+        prisma.financialCache.findFirst({
+          where: { code: p.code },
+          orderBy: { fiscalYearEnd: "desc" },
+        }),
+      ]);
+      const price = latestPriceRow?.close ?? null;
+      const eps = latestFin?.eps ?? null;
+      const bps = latestFin?.bookValuePerShare ?? null;
+      const per = price != null && eps != null && eps !== 0 ? price / eps : null;
+      const pbr = price != null && bps != null && bps !== 0 ? price / bps : null;
+      const roe =
+        latestFin?.netIncome != null && latestFin?.equity != null && latestFin.equity !== 0
+          ? (latestFin.netIncome / latestFin.equity) * 100
+          : null;
+      const equityRatio =
+        latestFin?.equityRatio != null ? latestFin.equityRatio * 100 : null;
+      return {
+        code: p.code,
+        ticker: p.ticker,
+        name: p.name,
+        isSelf: false,
+        hasData: latestFin != null || latestPriceRow != null,
+        latestPrice: price,
+        per,
+        pbr,
+        roe,
+        salesYoY: latestFin?.salesYoY ?? null,
+        profitYoY: latestFin?.profitYoY ?? null,
+        equityRatio,
+      } satisfies ComparisonRow;
+    }),
+  );
 
   // Compute change vs previous close
   const prevClose =
@@ -139,6 +201,31 @@ export default async function StockDetail({ params }: PageProps) {
   const ret3M = returnPct(60);
   const ret6M = returnPct(120);
   const ret1Y = returnPct(240);
+
+  // Build comparison rows: self first, peers sorted by salesYoY desc (data-less last)
+  const latestFinSelf = financialRows[financialRows.length - 1] ?? null;
+  const equityRatioSelf =
+    latestFinSelf?.equityRatio != null ? latestFinSelf.equityRatio * 100 : null;
+  const selfRow: ComparisonRow = {
+    code,
+    ticker: stock.ticker,
+    name: stock.name,
+    isSelf: true,
+    hasData: latestFinSelf != null || latestPrice != null,
+    latestPrice,
+    per: metrics.per,
+    pbr: metrics.pbr,
+    roe: metrics.roe,
+    salesYoY: metrics.salesGrowthYoY,
+    profitYoY: metrics.profitGrowthYoY,
+    equityRatio: equityRatioSelf,
+  };
+  const sortedPeers = [...peerMetrics].sort((a, b) => {
+    const av = a.salesYoY ?? Number.NEGATIVE_INFINITY;
+    const bv = b.salesYoY ?? Number.NEGATIVE_INFINITY;
+    return bv - av;
+  });
+  const comparisonRows: ComparisonRow[] = [selfRow, ...sortedPeers];
 
   return (
     <div className="space-y-6">
@@ -259,6 +346,10 @@ export default async function StockDetail({ params }: PageProps) {
         />
       </section>
 
+      {peers.length > 0 && (
+        <PeerComparisonTable rows={comparisonRows} sectorName={stock.sector33Name} />
+      )}
+
       {annualSummaries.length > 0 && (
         <section className="rounded-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-neutral-900 p-5">
           <h2 className="text-sm font-semibold mb-3">業績推移（通期）</h2>
@@ -318,29 +409,6 @@ export default async function StockDetail({ params }: PageProps) {
         </div>
       )}
 
-      {peers.length > 0 && (
-        <section>
-          <h2 className="text-sm font-semibold mb-3">同業他社（{stock.sector33Name}）</h2>
-          <ul className="rounded-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-neutral-900 divide-y divide-black/5 dark:divide-white/5 overflow-hidden">
-            {peers.map((p) => (
-              <li key={p.code}>
-                <a
-                  href={`/stocks/${p.code}`}
-                  className="flex items-center justify-between gap-3 px-4 py-2 text-sm hover:bg-neutral-50 dark:hover:bg-neutral-800/50 transition"
-                >
-                  <span className="min-w-0 flex items-center gap-2">
-                    <span className="font-mono text-neutral-500 shrink-0">{p.ticker}</span>
-                    <span className="truncate font-medium">{p.name}</span>
-                  </span>
-                  <span className="text-xs text-neutral-500 shrink-0">
-                    {p.scaleCategory}
-                  </span>
-                </a>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
     </div>
   );
 }
