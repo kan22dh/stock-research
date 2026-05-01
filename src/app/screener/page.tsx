@@ -4,6 +4,7 @@ import { syncListedInfoIfStale } from "@/lib/sync";
 import { JQuantsAuthError } from "@/lib/jquants";
 import { BulkSyncButton } from "@/components/bulk-sync-button";
 import { formatYen, formatPercent } from "@/lib/financial-metrics";
+import { investmentScore, scoreColor } from "@/lib/investment-score";
 
 const SMALL_SCALES = ["TOPIX Small 1", "TOPIX Small 2"];
 
@@ -79,9 +80,37 @@ export default async function ScreenerPage({
     hasFinancials: boolean;
   };
 
-  const allRows: Row[] = smallStocks.map((s) => {
+  // Get latest price per code for PER calculation in score
+  const latestPrices = await prisma.priceCache.findMany({
+    where: { code: { in: smallStocks.map((s) => s.code) } },
+    orderBy: { date: "desc" },
+  });
+  const latestPriceByCode = new Map<string, number>();
+  for (const p of latestPrices) {
+    if (!latestPriceByCode.has(p.code)) latestPriceByCode.set(p.code, p.close);
+  }
+
+  const allRows: (Row & { score: number | null })[] = smallStocks.map((s) => {
     const f = latestFinByCode.get(s.code);
     const fc = forecastByCode.get(s.code);
+    const price = latestPriceByCode.get(s.code) ?? null;
+    const eps = f?.eps ?? null;
+    const per =
+      price != null && eps != null && eps !== 0 ? price / eps : null;
+    const roe =
+      f?.netIncome != null && f?.equity != null && f.equity !== 0
+        ? (f.netIncome / f.equity) * 100
+        : null;
+    const equityRatio = f?.equityRatio != null ? f.equityRatio * 100 : null;
+    const scoreObj = f
+      ? investmentScore({
+          salesYoY: f.salesYoY,
+          roe,
+          per,
+          equityRatio,
+          forecastSalesYoY: fc?.salesYoYImplied ?? null,
+        })
+      : null;
     return {
       code: s.code,
       ticker: s.ticker,
@@ -97,6 +126,7 @@ export default async function ScreenerPage({
       netIncome: f?.netIncome ?? null,
       fiscalYearEnd: f?.fiscalYearEnd ?? null,
       hasFinancials: f != null,
+      score: scoreObj?.total ?? null,
     };
   });
 
@@ -113,6 +143,7 @@ export default async function ScreenerPage({
     if (sortKey === "profit") return (b.profitYoY ?? -9999) - (a.profitYoY ?? -9999);
     if (sortKey === "fcGrowth")
       return (b.forecastSalesYoY ?? -9999) - (a.forecastSalesYoY ?? -9999);
+    if (sortKey === "score") return (b.score ?? -1) - (a.score ?? -1);
     if (sortKey === "ticker") return a.ticker.localeCompare(b.ticker);
     // default: growth
     return (b.salesYoY ?? -9999) - (a.salesYoY ?? -9999);
@@ -193,6 +224,7 @@ export default async function ScreenerPage({
                 <thead className="bg-neutral-50 dark:bg-neutral-800/50 text-neutral-600 dark:text-neutral-400">
                   <tr>
                     <th className="text-left px-3 py-2 font-medium">銘柄</th>
+                    <th className="text-right px-3 py-2 font-medium whitespace-nowrap" title="投資魅力スコア (0-100)">⭐スコア</th>
                     <th className="text-left px-3 py-2 font-medium">業種</th>
                     <th className="text-right px-3 py-2 font-medium whitespace-nowrap">直近売上</th>
                     <th className="text-right px-3 py-2 font-medium whitespace-nowrap">売上YoY</th>
@@ -212,6 +244,13 @@ export default async function ScreenerPage({
                           <span className="font-mono text-neutral-500 mr-2">{r.ticker}</span>
                           {r.name}
                         </Link>
+                      </td>
+                      <td
+                        className={`px-3 py-2 text-right tabular-nums font-bold ${
+                          r.score == null ? "text-neutral-400" : scoreColor(r.score)
+                        }`}
+                      >
+                        {r.score != null ? r.score.toFixed(0) : "—"}
                       </td>
                       <td className="px-3 py-2 text-xs text-neutral-500">
                         {r.sector33Name ?? "—"}
@@ -396,6 +435,7 @@ function FilterForm({
             defaultValue={currentSort}
             className="w-full rounded-lg border border-black/15 dark:border-white/15 bg-white dark:bg-neutral-900 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900 dark:focus:ring-white"
           >
+            <option value="score">⭐スコア (高い順)</option>
             <option value="growth">売上YoY (高い順)</option>
             <option value="profit">純利益YoY (高い順)</option>
             <option value="fcGrowth">予想売上YoY (高い順)</option>
