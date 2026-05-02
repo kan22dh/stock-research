@@ -9,10 +9,12 @@ import { investmentScore, scoreColor } from "@/lib/investment-score";
 const SMALL_SCALES = ["TOPIX Small 1", "TOPIX Small 2"];
 
 type SearchParams = Promise<{
-  growth?: string;     // min sales YoY %
-  profit?: string;     // min profit YoY %
-  fcGrowth?: string;   // min forecast sales YoY %
-  sort?: string;       // "growth" | "profit" | "fcGrowth" | "ticker"
+  growth?: string;
+  profit?: string;
+  fcGrowth?: string;
+  minRoe?: string;     // ROE >= N %
+  maxPer?: string;     // PER <= N
+  sort?: string;
 }>;
 
 export default async function ScreenerPage({
@@ -24,6 +26,8 @@ export default async function ScreenerPage({
   const minGrowth = sp.growth ? Number(sp.growth) : 0;
   const minProfit = sp.profit ? Number(sp.profit) : -9999;
   const minFcGrowth = sp.fcGrowth ? Number(sp.fcGrowth) : -9999;
+  const minRoe = sp.minRoe ? Number(sp.minRoe) : -9999;
+  const maxPer = sp.maxPer ? Number(sp.maxPer) : 99999;
   const sortKey = sp.sort ?? "growth";
 
   let authError: string | null = null;
@@ -90,7 +94,7 @@ export default async function ScreenerPage({
     if (!latestPriceByCode.has(p.code)) latestPriceByCode.set(p.code, p.close);
   }
 
-  const allRows: (Row & { score: number | null })[] = smallStocks.map((s) => {
+  const allRows: (Row & { score: number | null; per: number | null; roe: number | null })[] = smallStocks.map((s) => {
     const f = latestFinByCode.get(s.code);
     const fc = forecastByCode.get(s.code);
     const price = latestPriceByCode.get(s.code) ?? null;
@@ -127,6 +131,8 @@ export default async function ScreenerPage({
       fiscalYearEnd: f?.fiscalYearEnd ?? null,
       hasFinancials: f != null,
       score: scoreObj?.total ?? null,
+      per,
+      roe,
     };
   });
 
@@ -137,7 +143,9 @@ export default async function ScreenerPage({
     .filter((r) => r.hasFinancials)
     .filter((r) => (r.salesYoY ?? -9999) >= minGrowth)
     .filter((r) => (r.profitYoY ?? -9999) >= minProfit)
-    .filter((r) => (r.forecastSalesYoY ?? -9999) >= minFcGrowth);
+    .filter((r) => (r.forecastSalesYoY ?? -9999) >= minFcGrowth)
+    .filter((r) => (r.roe ?? -9999) >= minRoe)
+    .filter((r) => (r.per ?? 99999) <= maxPer);
 
   filtered.sort((a, b) => {
     if (sortKey === "profit") return (b.profitYoY ?? -9999) - (a.profitYoY ?? -9999);
@@ -196,6 +204,8 @@ export default async function ScreenerPage({
         currentGrowth={sp.growth ?? ""}
         currentProfit={sp.profit ?? ""}
         currentFcGrowth={sp.fcGrowth ?? ""}
+        currentMinRoe={sp.minRoe ?? ""}
+        currentMaxPer={sp.maxPer ?? ""}
         currentSort={sortKey}
       />
 
@@ -338,6 +348,18 @@ function PresetButtons() {
       desc: "会社予想売上YoY ≥15%",
     },
     {
+      emoji: "🏆",
+      label: "高ROE割安",
+      href: "/screener?minRoe=15&maxPer=15&sort=score",
+      desc: "ROE≥15%, PER≤15倍",
+    },
+    {
+      emoji: "🎯",
+      label: "テンバガー候補",
+      href: "/screener?growth=30&minRoe=10&sort=growth",
+      desc: "売上+30%, ROE≥10%",
+    },
+    {
       emoji: "📊",
       label: "全銘柄",
       href: "/screener",
@@ -365,11 +387,15 @@ function FilterForm({
   currentGrowth,
   currentProfit,
   currentFcGrowth,
+  currentMinRoe,
+  currentMaxPer,
   currentSort,
 }: {
   currentGrowth: string;
   currentProfit: string;
   currentFcGrowth: string;
+  currentMinRoe: string;
+  currentMaxPer: string;
   currentSort: string;
 }) {
   return (
@@ -424,6 +450,36 @@ function FilterForm({
             className="w-full rounded-lg border border-black/15 dark:border-white/15 bg-white dark:bg-neutral-900 px-3 py-1.5 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-neutral-900 dark:focus:ring-white"
           />
           <p className="text-xs text-neutral-500 mt-1">会社予想ベース</p>
+        </div>
+        <div>
+          <label htmlFor="minRoe" className="block text-xs font-medium mb-1.5 text-neutral-600 dark:text-neutral-400">
+            ROE 最低 (%)
+          </label>
+          <input
+            type="number"
+            id="minRoe"
+            name="minRoe"
+            step="1"
+            defaultValue={currentMinRoe}
+            placeholder="(無制限)"
+            className="w-full rounded-lg border border-black/15 dark:border-white/15 bg-white dark:bg-neutral-900 px-3 py-1.5 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-neutral-900 dark:focus:ring-white"
+          />
+          <p className="text-xs text-neutral-500 mt-1">資本効率の高さ</p>
+        </div>
+        <div>
+          <label htmlFor="maxPer" className="block text-xs font-medium mb-1.5 text-neutral-600 dark:text-neutral-400">
+            PER 最大 (倍)
+          </label>
+          <input
+            type="number"
+            id="maxPer"
+            name="maxPer"
+            step="1"
+            defaultValue={currentMaxPer}
+            placeholder="(無制限)"
+            className="w-full rounded-lg border border-black/15 dark:border-white/15 bg-white dark:bg-neutral-900 px-3 py-1.5 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-neutral-900 dark:focus:ring-white"
+          />
+          <p className="text-xs text-neutral-500 mt-1">割安さ</p>
         </div>
         <div>
           <label htmlFor="sort" className="block text-xs font-medium mb-1.5 text-neutral-600 dark:text-neutral-400">
