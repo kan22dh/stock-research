@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { syncFinancialsIfStale, syncPricesIfStale } from "@/lib/sync";
+import { syncFinancialsIfStale } from "@/lib/sync";
 
 const DELAY_MS = 6000; // J-Quants free plan: ~10 req/min safe pacing
 
