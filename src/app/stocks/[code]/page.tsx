@@ -274,6 +274,20 @@ export default async function StockDetail({ params }: PageProps) {
   const ret6M = returnPct(120);
   const ret1Y = returnPct(240);
 
+  // Volume spike: today's volume vs 20-day average
+  const todayVolume = yahoo?.regularMarketVolume ?? null;
+  const avgVolume20 =
+    prices.length >= 20
+      ? prices
+          .slice(prices.length - 20)
+          .reduce((s, p) => s + p.volume, 0) / 20
+      : null;
+  const volumeRatio =
+    todayVolume != null && avgVolume20 != null && avgVolume20 > 0
+      ? todayVolume / avgVolume20
+      : null;
+  const volumeSpike = volumeRatio != null && volumeRatio >= 2;
+
   // Build comparison rows: self first, peers sorted by salesYoY desc (data-less last)
   const latestFinSelf = financialRows[financialRows.length - 1] ?? null;
   const equityRatioSelf =
@@ -369,6 +383,14 @@ export default async function StockDetail({ params }: PageProps) {
                 <span className="inline-flex items-center gap-1 text-[10px] text-red-500 font-bold">
                   <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
                   LIVE
+                </span>
+              )}
+              {volumeSpike && (
+                <span
+                  className="inline-flex items-center gap-1 text-[10px] text-orange-600 dark:text-orange-400 font-bold rounded-full bg-orange-50 dark:bg-orange-950/40 px-2 py-0.5 border border-orange-200 dark:border-orange-900/40"
+                  title={`平均20日比の出来高: ${volumeRatio?.toFixed(1)}倍`}
+                >
+                  🔥 出来高急増 ({volumeRatio?.toFixed(1)}x)
                 </span>
               )}
               <div className="text-3xl font-bold tabular-nums">

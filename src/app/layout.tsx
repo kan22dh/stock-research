@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Link from "next/link";
+import { NavMenu } from "@/components/nav-menu";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -15,7 +16,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Stock Research",
-  description: "個別株リサーチ・ダッシュボード（J-Quants API）",
+  description: "個別株リサーチ・ダッシュボード（リアルタイム）",
 };
 
 export default function RootLayout({
@@ -29,56 +30,19 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col bg-neutral-50 dark:bg-neutral-950 text-neutral-900 dark:text-neutral-100">
-        <header className="border-b border-black/10 dark:border-white/10 bg-white dark:bg-neutral-900">
+        <header className="border-b border-black/10 dark:border-white/10 bg-white dark:bg-neutral-900 relative">
           <div className="mx-auto max-w-6xl px-4 py-3 flex items-center justify-between">
             <Link href="/" className="font-bold text-lg tracking-tight">
               Stock Research
             </Link>
-            <nav className="flex items-center gap-4 text-sm">
-              <Link
-                href="/"
-                className="text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white transition"
-              >
-                銘柄検索
-              </Link>
-              <Link
-                href="/watchlist"
-                className="text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white transition"
-              >
-                ウォッチリスト
-              </Link>
-              <Link
-                href="/screener"
-                className="text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white transition"
-              >
-                スクリーナー
-              </Link>
-              <Link
-                href="/compare"
-                className="text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white transition"
-              >
-                比較
-              </Link>
-              <Link
-                href="/sectors"
-                className="text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white transition"
-              >
-                業界
-              </Link>
-              <Link
-                href="/macro"
-                className="text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white transition"
-              >
-                マクロ
-              </Link>
-            </nav>
+            <NavMenu />
           </div>
         </header>
         <main className="flex-1 mx-auto w-full max-w-6xl px-4 py-6">
           {children}
         </main>
         <footer className="border-t border-black/10 dark:border-white/10 py-4 text-center text-xs text-neutral-500">
-          Data: J-Quants API（無料プラン: 12週間遅延データ）
+          価格: Yahoo Finance（リアルタイム） / マクロ: Stooq + FRED / 財務: J-Quants v2
         </footer>
       </body>
     </html>
