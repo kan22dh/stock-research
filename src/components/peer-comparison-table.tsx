@@ -35,6 +35,11 @@ export function PeerComparisonTable({ rows, sectorName }: Props) {
         </h2>
         <span className="text-xs text-neutral-500">
           同業他社 {peerCount}社（うち財務取得済 {Math.max(withDataCount, 0)}社）
+          {Math.max(withDataCount, 0) < peerCount && (
+            <span className="ml-2 text-amber-600 dark:text-amber-400">
+              ⏳ 残りはバックグラウンド取得中
+            </span>
+          )}
         </span>
       </div>
       <div className="overflow-x-auto">

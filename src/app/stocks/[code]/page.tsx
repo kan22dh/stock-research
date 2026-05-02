@@ -50,15 +50,13 @@ export default async function StockDetail({ params }: PageProps) {
     })
     .catch(() => null);
 
-  // Fetch prices (sync if stale) - rate-limit safe per syncPricesIfStale TTL
-  const pricesResult = await Promise.allSettled([
-    syncPricesIfStale(code).then(() =>
-      prisma.priceCache.findMany({
-        where: { code },
-        orderBy: { date: "asc" },
-      }),
-    ),
-  ]).then((r) => r[0]);
+  // Read prices from cache immediately; refresh in background so a rate-limited
+  // sync doesn't slow the page or block render.
+  const prices = await prisma.priceCache.findMany({
+    where: { code },
+    orderBy: { date: "asc" },
+  });
+  syncPricesIfStale(code).catch(() => null);
 
   // Read financial data + forecast from cache. Background-refresh without blocking render.
   const [financialRows, forecast] = await Promise.all([
@@ -69,11 +67,6 @@ export default async function StockDetail({ params }: PageProps) {
     prisma.forecast.findUnique({ where: { code } }),
   ]);
   syncFinancialsIfStale(code).catch(() => null);
-
-  if (pricesResult.status === "rejected") {
-    return <ApiErrorView error={pricesResult.reason} />;
-  }
-  const prices = pricesResult.value;
 
   const annualSummaries: FiscalYearSummary[] = financialRows.map((f) => ({
     fiscalYearEnd: f.fiscalYearEnd,
@@ -134,6 +127,21 @@ export default async function StockDetail({ params }: PageProps) {
         return [...sameScale, ...filler];
       })()
     : [];
+
+  // Background-sync up to 2 peers without cached data (rate-limit-friendly).
+  // Each visit gradually fills in peer data; full coverage emerges after ~5 visits.
+  void (async () => {
+    let started = 0;
+    for (const p of peers) {
+      if (started >= 2) break;
+      const hasFin = await prisma.financialCache.count({ where: { code: p.code } });
+      if (hasFin > 0) continue;
+      // Don't await — let these run in the background; helpers retry on 429
+      syncPricesIfStale(p.code).catch(() => null);
+      syncFinancialsIfStale(p.code).catch(() => null);
+      started++;
+    }
+  })();
 
   const peerMetrics = await Promise.all(
     peers.map(async (p) => {

@@ -67,12 +67,14 @@ export async function syncPricesIfStale(code: string): Promise<{ count: number; 
     if (count > 0) return { count, refreshed: false };
   }
 
-  // Free plan covers a window ending ~12 weeks (84 days) before today.
+  // Free plan covers ~2 years ending ~12 weeks (84 days) before today.
+  // Pull the maximum available window so the chart's "全期間" mode is meaningful.
   const FREE_PLAN_DELAY_DAYS = 90;
+  const FREE_PLAN_HISTORY_MONTHS = 24;
   const to = new Date();
   to.setDate(to.getDate() - FREE_PLAN_DELAY_DAYS);
   const from = new Date(to);
-  from.setFullYear(from.getFullYear() - 1);
+  from.setMonth(from.getMonth() - FREE_PLAN_HISTORY_MONTHS);
   const fromStr = from.toISOString().slice(0, 10);
   const toStr = to.toISOString().slice(0, 10);
 
