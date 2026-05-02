@@ -1,41 +1,88 @@
 import { fetchAllMacroSeries, latestValue, type FredSeries } from "@/lib/fred";
+import { fetchAllStooqQuotes, type StooqInstrumentId } from "@/lib/stooq";
 import { LineChart } from "@/components/line-chart";
+import { LiveQuoteCard } from "@/components/live-quote-card";
 
-export const revalidate = 21600; // 6h cache
+// Live page - frequent revalidation since Stooq quotes are real-time-ish
+export const revalidate = 60;
 
 const COLOR_BY_ID: Record<string, string> = {
-  DFF: "#dc2626",        // red - rates
-  DGS10: "#ea580c",      // orange - long rates
-  CPIAUCSL: "#7c3aed",   // purple - inflation
-  UNRATE: "#0891b2",     // cyan - employment
-  DEXJPUS: "#16a34a",    // green - fx
-  DCOILWTICO: "#525252", // gray - oil
-  PAYEMS: "#0284c7",     // blue - employment
-  VIXCLS: "#be185d",     // pink - volatility
+  DFF: "#dc2626",
+  DGS10: "#ea580c",
+  CPIAUCSL: "#7c3aed",
+  UNRATE: "#0891b2",
+  DEXJPUS: "#16a34a",
+  DCOILWTICO: "#525252",
+  PAYEMS: "#0284c7",
+  VIXCLS: "#be185d",
 };
 
+const LIVE_SYMBOLS: StooqInstrumentId[] = [
+  "usdjpy",
+  "eurjpy",
+  "oil",
+  "gold",
+  "nikkei",
+  "topix",
+  "sp500",
+  "dow",
+];
+
+// FRED series we still want; FX/oil are handled by Stooq above
+const FRED_KEEP = ["DFF", "DGS10", "CPIAUCSL", "UNRATE", "PAYEMS", "VIXCLS"];
+
 export default async function MacroPage() {
-  const series = await fetchAllMacroSeries();
+  const [series, liveQuotes] = await Promise.all([
+    fetchAllMacroSeries(),
+    fetchAllStooqQuotes(LIVE_SYMBOLS),
+  ]);
+
+  const fredCards = series.filter((s) => FRED_KEEP.includes(s.id));
+  const liveCards = liveQuotes.filter((q) => q.available);
 
   return (
     <div className="space-y-6">
       <header>
         <h1 className="text-2xl font-bold tracking-tight">マクロ環境</h1>
         <p className="text-sm text-neutral-600 dark:text-neutral-400 mt-1">
-          米国・国際マクロ指標（過去5年）。データソース: FRED（米セントルイス連銀）
+          リアルタイム指標（Stooq）と長期マクロ指標（FRED）を統合表示
         </p>
       </header>
 
-      {series.length === 0 ? (
-        <div className="rounded-2xl border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/30 px-4 py-3 text-sm text-amber-800 dark:text-amber-400">
-          マクロデータの取得に失敗しました。FRED 側の障害かネットワーク問題の可能性があります。
-        </div>
-      ) : (
-        <div className="grid gap-5 lg:grid-cols-2">
-          {series.map((s) => (
-            <MacroCard key={s.id} series={s} />
-          ))}
-        </div>
+      {liveCards.length > 0 && (
+        <section className="space-y-3">
+          <div className="flex items-baseline gap-3 flex-wrap">
+            <h2 className="text-lg font-semibold flex items-center gap-2">
+              <span className="inline-flex items-center gap-1 text-xs text-red-500 font-bold">
+                <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+                LIVE
+              </span>
+              リアルタイム指標
+            </h2>
+            <span className="text-xs text-neutral-500">
+              Stooq（〜数分遅延）
+            </span>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {liveCards.map((q) => (
+              <LiveQuoteCard key={q.id} quote={q} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {fredCards.length > 0 && (
+        <section className="space-y-3">
+          <h2 className="text-lg font-semibold">長期マクロ指標（過去5年）</h2>
+          <p className="text-xs text-neutral-500">
+            FRED（米セントルイス連銀）— 日次/月次更新
+          </p>
+          <div className="grid gap-5 lg:grid-cols-2">
+            {fredCards.map((s) => (
+              <MacroCard key={s.id} series={s} />
+            ))}
+          </div>
+        </section>
       )}
 
       <section className="rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-neutral-900 p-5 text-xs text-neutral-600 dark:text-neutral-400 space-y-1.5">
@@ -48,6 +95,7 @@ export default async function MacroPage() {
           <li><strong>失業率↓ / 雇用↑</strong>: 景気強い → 個人消費・市場心理にポジティブ</li>
           <li><strong>USD/JPY↑（円安）</strong>: 日本の輸出企業にポジティブ、輸入依存企業にネガティブ</li>
           <li><strong>WTI原油↑</strong>: エネルギー・商社にポジティブ、運輸・素材にネガティブ</li>
+          <li><strong>VIX↑</strong>: 市場の不安心理が高まっている。リスクオフ警戒</li>
         </ul>
       </section>
     </div>
