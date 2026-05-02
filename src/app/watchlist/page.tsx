@@ -1,6 +1,9 @@
 import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { WatchToggle } from "@/components/watch-toggle";
+import { fetchYahoo } from "@/lib/yahoo-finance";
+
+export const revalidate = 60;
 
 function pct(latest: number | null, past: number | null): number | null {
   if (latest == null || past == null || past === 0) return null;
@@ -13,25 +16,30 @@ export default async function WatchlistPage() {
     include: { stock: true },
   });
 
-  // Per-item: latest price, ~1M past price, latest financials, latest forecast
+  // Per-item: live price (Yahoo) + ~1M change + latest financials/forecast
   const enriched = await Promise.all(
     items.map(async (w) => {
-      const [prices, latestFin, fc] = await Promise.all([
-        prisma.priceCache.findMany({
-          where: { code: w.code },
-          orderBy: { date: "desc" },
-          take: 25, // ~1 month of trading days
-        }),
+      const [yahoo, latestFin, fc] = await Promise.all([
+        fetchYahoo(w.code, "3mo", 60).catch(() => null),
         prisma.financialCache.findFirst({
           where: { code: w.code },
           orderBy: { fiscalYearEnd: "desc" },
         }),
         prisma.forecast.findUnique({ where: { code: w.code } }),
       ]);
-      const latestPrice = prices[0]?.close ?? null;
-      const past1M = prices[prices.length - 1]?.close ?? null;
-      const ret1M = pct(latestPrice, past1M);
-      return { ...w, latestPrice, ret1M, latestFin, forecast: fc };
+      const latestPrice = yahoo?.regularMarketPrice ?? null;
+      const dayChange =
+        yahoo?.regularMarketPrice != null && yahoo?.previousClose != null && yahoo.previousClose !== 0
+          ? ((yahoo.regularMarketPrice - yahoo.previousClose) / yahoo.previousClose) * 100
+          : null;
+      // 1-month return = current vs ~20 trading days ago
+      let ret1M: number | null = null;
+      if (yahoo && yahoo.bars.length >= 20 && latestPrice != null) {
+        const idx = yahoo.bars.length - 20;
+        const past = yahoo.bars[idx]?.close;
+        ret1M = pct(latestPrice, past ?? null);
+      }
+      return { ...w, latestPrice, dayChange, ret1M, latestFin, forecast: fc };
     }),
   );
 
@@ -59,7 +67,8 @@ export default async function WatchlistPage() {
               <thead className="bg-neutral-50 dark:bg-neutral-800/50 text-neutral-600 dark:text-neutral-400">
                 <tr>
                   <th className="text-left px-4 py-2.5 font-medium">銘柄</th>
-                  <th className="text-right px-4 py-2.5 font-medium whitespace-nowrap">株価</th>
+                  <th className="text-right px-4 py-2.5 font-medium whitespace-nowrap" title="Yahoo Finance リアルタイム">🔴 株価</th>
+                  <th className="text-right px-4 py-2.5 font-medium whitespace-nowrap">前日比</th>
                   <th className="text-right px-4 py-2.5 font-medium whitespace-nowrap">1ヶ月</th>
                   <th className="text-right px-4 py-2.5 font-medium whitespace-nowrap">売上YoY</th>
                   <th className="text-right px-4 py-2.5 font-medium whitespace-nowrap">予想売上YoY</th>
@@ -82,13 +91,28 @@ export default async function WatchlistPage() {
                         <div className="text-xs text-neutral-500 mt-0.5">{w.note}</div>
                       )}
                     </td>
-                    <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap">
+                    <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap font-medium">
                       {w.latestPrice != null
                         ? `${w.latestPrice.toLocaleString("ja-JP")}円`
                         : "—"}
                     </td>
                     <td
                       className={`px-4 py-2.5 text-right tabular-nums whitespace-nowrap font-medium ${
+                        w.dayChange != null
+                          ? w.dayChange > 0
+                            ? "text-emerald-600 dark:text-emerald-400"
+                            : w.dayChange < 0
+                              ? "text-red-600 dark:text-red-400"
+                              : ""
+                          : ""
+                      }`}
+                    >
+                      {w.dayChange != null
+                        ? `${w.dayChange > 0 ? "+" : ""}${w.dayChange.toFixed(2)}%`
+                        : "—"}
+                    </td>
+                    <td
+                      className={`px-4 py-2.5 text-right tabular-nums whitespace-nowrap ${
                         w.ret1M != null
                           ? w.ret1M > 0
                             ? "text-emerald-600 dark:text-emerald-400"

@@ -15,6 +15,7 @@ import {
 } from "@/lib/financial-metrics";
 import { CandleChart, type CandlePoint } from "@/components/candle-chart";
 import { WatchToggle } from "@/components/watch-toggle";
+import { fetchYahoo } from "@/lib/yahoo-finance";
 import { AiAnalyze } from "@/components/ai-analyze";
 import { AutoDiagnose } from "@/components/auto-diagnose";
 import { InvestmentScoreCard } from "@/components/investment-score-card";
@@ -50,22 +51,37 @@ export default async function StockDetail({ params }: PageProps) {
     })
     .catch(() => null);
 
-  // First, check if we already have prices cached. If yes, render immediately
-  // and refresh in background (fast UX). If not, await the sync so the chart
-  // has data on first visit.
-  let prices = await prisma.priceCache.findMany({
-    where: { code },
-    orderBy: { date: "asc" },
-  });
-  if (prices.length === 0) {
-    // First visit — must wait for the API call (or it fails on rate limit)
-    await syncPricesIfStale(code).catch(() => null);
+  // PRIMARY SOURCE: Yahoo Finance (real-time + 5y history, no auth, no rate limit)
+  // FALLBACK: existing J-Quants PriceCache (12-week delayed, bounded by API quota)
+  const yahoo = await fetchYahoo(code, "5y", 60);
+
+  // Background-refresh J-Quants cache as a fallback in case Yahoo goes down
+  syncPricesIfStale(code).catch(() => null);
+
+  // Map Yahoo bars to PriceCache shape; if Yahoo unavailable, read DB cache
+  type PriceRow = {
+    date: Date;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume: number;
+  };
+  let prices: PriceRow[];
+  if (yahoo && yahoo.bars.length > 0) {
+    prices = yahoo.bars.map((b) => ({
+      date: new Date(b.time),
+      open: b.open,
+      high: b.high,
+      low: b.low,
+      close: b.close,
+      volume: b.volume,
+    }));
+  } else {
     prices = await prisma.priceCache.findMany({
       where: { code },
       orderBy: { date: "asc" },
     });
-  } else {
-    syncPricesIfStale(code).catch(() => null);
   }
 
   // Read financial data + forecast from cache. Background-refresh without blocking render.
@@ -101,8 +117,18 @@ export default async function StockDetail({ params }: PageProps) {
     volume: p.volume,
   }));
 
-  const latestPrice = prices.length > 0 ? prices[prices.length - 1].close : null;
-  const latestDate = prices.length > 0 ? prices[prices.length - 1].date : null;
+  // Use Yahoo's truly-live price if we have it (may be intraday, ahead of last bar);
+  // otherwise fall back to the latest cached close.
+  const latestPrice =
+    yahoo?.regularMarketPrice ??
+    (prices.length > 0 ? prices[prices.length - 1].close : null);
+  const latestDate =
+    yahoo?.regularMarketTime != null
+      ? new Date(yahoo.regularMarketTime * 1000)
+      : prices.length > 0
+        ? prices[prices.length - 1].date
+        : null;
+  const isLive = yahoo?.regularMarketPrice != null;
   const metrics = deriveMetrics(annualSummaries, latestPrice);
 
   const isWatched = (await prisma.watchlist.findUnique({ where: { code } })) != null;
@@ -155,7 +181,9 @@ export default async function StockDetail({ params }: PageProps) {
 
   const peerMetrics = await Promise.all(
     peers.map(async (p) => {
-      const [latestPriceRow, latestFin, peerForecast] = await Promise.all([
+      const [yahooPeer, latestPriceRow, latestFin, peerForecast] = await Promise.all([
+        // Use a longer cache (5 min) for peer prices to avoid 8 simultaneous fetches every time
+        fetchYahoo(p.code, "1mo", 300).catch(() => null),
         prisma.priceCache.findFirst({
           where: { code: p.code },
           orderBy: { date: "desc" },
@@ -166,7 +194,9 @@ export default async function StockDetail({ params }: PageProps) {
         }),
         prisma.forecast.findUnique({ where: { code: p.code } }),
       ]);
-      const price = latestPriceRow?.close ?? null;
+      // Live (Yahoo) > cached J-Quants
+      const price =
+        yahooPeer?.regularMarketPrice ?? latestPriceRow?.close ?? null;
       const eps = latestFin?.eps ?? null;
       const bps = latestFin?.bookValuePerShare ?? null;
       const per = price != null && eps != null && eps !== 0 ? price / eps : null;
@@ -196,9 +226,11 @@ export default async function StockDetail({ params }: PageProps) {
     }),
   );
 
-  // Compute change vs previous close
+  // Compute change vs previous close. Prefer Yahoo's previousClose (always
+  // correct relative to live price); fall back to second-to-last bar.
   const prevClose =
-    prices.length >= 2 ? prices[prices.length - 2].close : null;
+    yahoo?.previousClose ??
+    (prices.length >= 2 ? prices[prices.length - 2].close : null);
   const change =
     latestPrice != null && prevClose != null ? latestPrice - prevClose : null;
   const changePct =
@@ -206,9 +238,13 @@ export default async function StockDetail({ params }: PageProps) {
       ? (change / prevClose) * 100
       : null;
 
-  // 52-week (period available) high/low
-  const year52High = prices.length > 0 ? Math.max(...prices.map((p) => p.high)) : null;
-  const year52Low = prices.length > 0 ? Math.min(...prices.map((p) => p.low)) : null;
+  // 52-week high/low — prefer Yahoo's official 52w (rolling), fall back to bar-derived
+  const year52High =
+    yahoo?.fiftyTwoWeekHigh ??
+    (prices.length > 0 ? Math.max(...prices.map((p) => p.high)) : null);
+  const year52Low =
+    yahoo?.fiftyTwoWeekLow ??
+    (prices.length > 0 ? Math.min(...prices.map((p) => p.low)) : null);
   const positionInRange =
     latestPrice != null && year52High != null && year52Low != null && year52High !== year52Low
       ? ((latestPrice - year52Low) / (year52High - year52Low)) * 100
@@ -301,8 +337,16 @@ export default async function StockDetail({ params }: PageProps) {
       <section className="rounded-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-neutral-900 p-5">
         <div className="flex items-baseline gap-4 flex-wrap">
           <div>
-            <div className="text-3xl font-bold tabular-nums">
-              {latestPrice != null ? `${latestPrice.toLocaleString("ja-JP")}円` : "—"}
+            <div className="flex items-baseline gap-2 flex-wrap">
+              {isLive && (
+                <span className="inline-flex items-center gap-1 text-[10px] text-red-500 font-bold">
+                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+                  LIVE
+                </span>
+              )}
+              <div className="text-3xl font-bold tabular-nums">
+                {latestPrice != null ? `${latestPrice.toLocaleString("ja-JP")}円` : "—"}
+              </div>
             </div>
             {change != null && changePct != null && (
               <div
@@ -312,15 +356,35 @@ export default async function StockDetail({ params }: PageProps) {
                     : "text-red-600 dark:text-red-400"
                 }`}
               >
-                {change >= 0 ? "+" : ""}
+                前日比 {change >= 0 ? "+" : ""}
                 {change.toFixed(1)}円（{change >= 0 ? "+" : ""}
                 {changePct.toFixed(2)}%）
               </div>
             )}
           </div>
-          {latestDate && (
+          {yahoo &&
+            yahoo.regularMarketDayHigh != null &&
+            yahoo.regularMarketDayLow != null && (
+              <div className="text-xs text-neutral-500 ml-auto space-y-0.5">
+                <div>
+                  当日高 <span className="text-emerald-600 dark:text-emerald-400 tabular-nums font-medium">
+                    {yahoo.regularMarketDayHigh.toLocaleString("ja-JP")}
+                  </span>{" "}
+                  / 安 <span className="text-red-600 dark:text-red-400 tabular-nums font-medium">
+                    {yahoo.regularMarketDayLow.toLocaleString("ja-JP")}
+                  </span>
+                </div>
+                {latestDate && (
+                  <div className="text-neutral-400">
+                    取得時刻: {latestDate.toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" })}
+                  </div>
+                )}
+                <div className="text-neutral-400">Yahoo Finance（〜数分遅延）</div>
+              </div>
+            )}
+          {!yahoo && latestDate && (
             <div className="text-xs text-neutral-500 ml-auto">
-              データ日付: {latestDate.toLocaleDateString("ja-JP")}（無料プラン: 約12週遅延）
+              データ日付: {latestDate.toLocaleDateString("ja-JP")}（J-Quants無料: 約12週遅延）
             </div>
           )}
         </div>

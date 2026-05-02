@@ -1,28 +1,44 @@
 import Link from "next/link";
 import { prisma } from "@/lib/db";
-import { syncListedInfoIfStale, syncPricesIfStale, syncFinancialsIfStale } from "@/lib/sync";
+import { syncListedInfoIfStale, syncFinancialsIfStale } from "@/lib/sync";
 import { JQuantsAuthError } from "@/lib/jquants";
 import { CandleChart, type CandlePoint } from "@/components/candle-chart";
 import { CompareAi } from "@/components/compare-ai";
 import { isAiEnabled } from "@/lib/ai";
+import { fetchYahoo } from "@/lib/yahoo-finance";
 import { formatYen, formatPercent, formatNumber } from "@/lib/financial-metrics";
+
+export const revalidate = 60;
 
 type SearchParams = Promise<{ codes?: string }>;
 
 async function loadStock(code: string) {
-  // Read everything from cache, refresh in background (don't block)
-  const [stock, prices, fin] = await Promise.all([
+  const [stock, yahoo, fin] = await Promise.all([
     prisma.listedStock.findUnique({ where: { code } }),
-    prisma.priceCache.findMany({ where: { code }, orderBy: { date: "asc" } }),
+    fetchYahoo(code, "2y", 60).catch(() => null),
     prisma.financialCache.findMany({
       where: { code },
       orderBy: { fiscalYearEnd: "desc" },
       take: 1,
     }),
   ]);
-  syncPricesIfStale(code).catch(() => null);
   syncFinancialsIfStale(code).catch(() => null);
-  return { stock, prices, latestFin: fin[0] ?? null };
+  // Convert Yahoo bars (or empty) into the existing PriceRow shape
+  const prices = (yahoo?.bars ?? []).map((b) => ({
+    date: new Date(b.time),
+    close: b.close,
+    open: b.open,
+    high: b.high,
+    low: b.low,
+    volume: b.volume,
+  }));
+  return {
+    stock,
+    prices,
+    latestFin: fin[0] ?? null,
+    livePrice: yahoo?.regularMarketPrice ?? null,
+    previousClose: yahoo?.previousClose ?? null,
+  };
 }
 
 export default async function ComparePage({
@@ -86,7 +102,9 @@ export default async function ComparePage({
               close: p.close,
               volume: p.volume,
             }));
-            const latestPrice = s.prices.length > 0 ? s.prices[s.prices.length - 1].close : null;
+            const latestPrice =
+              s.livePrice ??
+              (s.prices.length > 0 ? s.prices[s.prices.length - 1].close : null);
             const oldestPrice = s.prices.length > 0 ? s.prices[0].close : null;
             const yearChange =
               latestPrice != null && oldestPrice != null && oldestPrice !== 0
