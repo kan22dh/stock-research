@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { investmentScore } from "@/lib/investment-score";
+import { SyncPeersButton } from "@/components/sync-peers-button";
 
 export type ComparisonRow = {
   code: string;
@@ -16,16 +17,21 @@ export type ComparisonRow = {
   equityRatio: number | null;  // % (already in 0-100)
   forecastSalesYoY: number | null;  // % (company guidance vs prior actual FY)
   forecastProfitYoY: number | null; // %
+  dividendYield: number | null;     // %
 };
 
 type Props = {
   rows: ComparisonRow[];
   sectorName: string | null;
+  peerCodes?: string[];
 };
 
-export function PeerComparisonTable({ rows, sectorName }: Props) {
-  const withDataCount = rows.filter((r) => r.hasData).length - (rows.find((r) => r.isSelf)?.hasData ? 1 : 0);
-  const peerCount = rows.filter((r) => !r.isSelf).length;
+export function PeerComparisonTable({ rows, sectorName, peerCodes }: Props) {
+  // Count peers with FINANCIAL data (PER/ROE/YoY etc), not just price
+  const peerRows = rows.filter((r) => !r.isSelf);
+  const peersWithFin = peerRows.filter((r) => r.salesYoY != null || r.roe != null).length;
+  const peerCount = peerRows.length;
+  const selfCode = rows.find((r) => r.isSelf)?.code;
 
   return (
     <section className="rounded-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-neutral-900 p-3">
@@ -33,14 +39,14 @@ export function PeerComparisonTable({ rows, sectorName }: Props) {
         <h2 className="text-sm font-semibold">
           業界内比較{sectorName ? `（${sectorName}）` : ""}
         </h2>
-        <span className="text-xs text-neutral-500">
-          同業他社 {peerCount}社（うち財務取得済 {Math.max(withDataCount, 0)}社）
-          {Math.max(withDataCount, 0) < peerCount && (
-            <span className="ml-2 text-amber-600 dark:text-amber-400">
-              ⏳ 残りはバックグラウンド取得中
-            </span>
+        <div className="flex items-center gap-3 flex-wrap">
+          <span className="text-xs text-neutral-500">
+            同業他社 {peerCount}社（うち財務取得済 {peersWithFin}社）
+          </span>
+          {peerCodes && selfCode && peersWithFin < peerCount && (
+            <SyncPeersButton peerCodes={peerCodes} selfCode={selfCode} />
           )}
-        </span>
+        </div>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
@@ -56,6 +62,7 @@ export function PeerComparisonTable({ rows, sectorName }: Props) {
               <th className="text-right px-3 py-2 font-medium whitespace-nowrap">純利益YoY</th>
               <th className="text-right px-3 py-2 font-medium whitespace-nowrap" title="会社予想 売上YoY">予想売上YoY</th>
               <th className="text-right px-3 py-2 font-medium whitespace-nowrap" title="会社予想 純利益YoY">予想利益YoY</th>
+              <th className="text-right px-3 py-2 font-medium whitespace-nowrap" title="配当利回り">配当利回り</th>
               <th className="text-right px-3 py-2 font-medium whitespace-nowrap">自己資本比率</th>
             </tr>
           </thead>
@@ -149,6 +156,9 @@ function Row({ row }: { row: ComparisonRow }) {
         {row.forecastProfitYoY != null
           ? `${row.forecastProfitYoY > 0 ? "+" : ""}${row.forecastProfitYoY.toFixed(1)}%`
           : "—"}
+      </td>
+      <td className="px-3 py-2.5 text-right tabular-nums whitespace-nowrap">
+        {row.dividendYield != null ? `${row.dividendYield.toFixed(2)}%` : "—"}
       </td>
       <td className="px-3 py-2.5 text-right tabular-nums whitespace-nowrap">
         {row.equityRatio != null ? `${row.equityRatio.toFixed(1)}%` : "—"}

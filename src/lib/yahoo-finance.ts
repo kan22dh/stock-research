@@ -115,25 +115,87 @@ export async function fetchYahoo(
     const ticker4 =
       typeof m.symbol === "string" ? m.symbol.replace(".T", "") : code;
 
+    // PROPER previousClose: the close of the bar before the latest one.
+    // Yahoo's `chartPreviousClose` is actually the start-of-range close (e.g.
+    // 5 years ago when range=5y) — using it would produce wildly wrong day-change.
+    // `meta.previousClose` is often null too. Bars are always reliable.
+    const livePrice = numOrNull(m.regularMarketPrice);
+    let previousClose: number | null = null;
+    if (bars.length >= 2) {
+      const last = bars[bars.length - 1];
+      // If livePrice equals the last bar's close, "previous" is the bar before
+      // that. If livePrice is intraday (different from last bar's close), the
+      // last bar IS the previous close.
+      if (livePrice != null && Math.abs(livePrice - last.close) > 0.01) {
+        previousClose = last.close;
+      } else {
+        previousClose = bars[bars.length - 2].close;
+      }
+    }
+
     return {
       symbol: typeof m.symbol === "string" ? m.symbol : symbol,
       ticker4,
       currency: typeof m.currency === "string" ? m.currency : "JPY",
       exchange: typeof m.fullExchangeName === "string" ? m.fullExchangeName : "Tokyo",
       longName: typeof m.longName === "string" ? m.longName : null,
-      regularMarketPrice: numOrNull(m.regularMarketPrice),
+      regularMarketPrice: livePrice,
       regularMarketTime: numOrNull(m.regularMarketTime),
       regularMarketDayHigh: numOrNull(m.regularMarketDayHigh),
       regularMarketDayLow: numOrNull(m.regularMarketDayLow),
       regularMarketVolume: numOrNull(m.regularMarketVolume),
-      previousClose:
-        numOrNull(m.previousClose) ?? numOrNull(m.chartPreviousClose),
+      previousClose,
       fiftyTwoWeekHigh: numOrNull(m.fiftyTwoWeekHigh),
       fiftyTwoWeekLow: numOrNull(m.fiftyTwoWeekLow),
       bars,
     };
   } catch {
     return null;
+  }
+}
+
+// ----- Dividends -----
+
+export type YahooDividend = {
+  date: string;   // YYYY-MM-DD (ex-dividend / record date proxy)
+  amount: number;
+};
+
+export async function fetchYahooDividends(
+  code: string,
+  yearsBack = 3,
+  revalidateSec = 3600,
+): Promise<YahooDividend[]> {
+  const symbol = toYahooSymbol(code);
+  const range = `${yearsBack}y`;
+  const url = `${BASE}/${encodeURIComponent(symbol)}?interval=1d&range=${range}&events=div`;
+  try {
+    const res = await fetch(url, {
+      headers: { "User-Agent": UA, Accept: "application/json" },
+      next: { revalidate: revalidateSec },
+    });
+    if (!res.ok) return [];
+    const json = (await res.json()) as {
+      chart?: {
+        result?: Array<{
+          events?: { dividends?: Record<string, { date: number; amount: number }> };
+        }>;
+      };
+    };
+    const divs = json.chart?.result?.[0]?.events?.dividends ?? {};
+    const list: YahooDividend[] = [];
+    for (const v of Object.values(divs)) {
+      if (typeof v.date === "number" && typeof v.amount === "number") {
+        list.push({
+          date: new Date(v.date * 1000).toISOString().slice(0, 10),
+          amount: v.amount,
+        });
+      }
+    }
+    list.sort((a, b) => a.date.localeCompare(b.date));
+    return list;
+  } catch {
+    return [];
   }
 }
 

@@ -15,7 +15,9 @@ import {
 } from "@/lib/financial-metrics";
 import { CandleChart, type CandlePoint } from "@/components/candle-chart";
 import { WatchToggle } from "@/components/watch-toggle";
-import { fetchYahoo } from "@/lib/yahoo-finance";
+import { fetchYahoo, fetchYahooDividends } from "@/lib/yahoo-finance";
+import { summarizeDividends } from "@/lib/dividend-summary";
+import { DividendSection } from "@/components/dividend-section";
 import { AiAnalyze } from "@/components/ai-analyze";
 import { AutoDiagnose } from "@/components/auto-diagnose";
 import { InvestmentScoreCard } from "@/components/investment-score-card";
@@ -53,7 +55,10 @@ export default async function StockDetail({ params }: PageProps) {
 
   // PRIMARY SOURCE: Yahoo Finance (real-time + 5y history, no auth, no rate limit)
   // FALLBACK: existing J-Quants PriceCache (12-week delayed, bounded by API quota)
-  const yahoo = await fetchYahoo(code, "5y", 60);
+  const [yahoo, dividends] = await Promise.all([
+    fetchYahoo(code, "5y", 60),
+    fetchYahooDividends(code, 3, 3600),
+  ]);
 
   // Background-refresh J-Quants cache as a fallback in case Yahoo goes down
   syncPricesIfStale(code).catch(() => null);
@@ -222,6 +227,10 @@ export default async function StockDetail({ params }: PageProps) {
         equityRatio,
         forecastSalesYoY: peerForecast?.salesYoYImplied ?? null,
         forecastProfitYoY: peerForecast?.profitYoYImplied ?? null,
+        dividendYield:
+          latestFin?.dividend != null && price != null && price !== 0
+            ? (latestFin.dividend / price) * 100
+            : null,
       } satisfies ComparisonRow;
     }),
   );
@@ -268,6 +277,22 @@ export default async function StockDetail({ params }: PageProps) {
   const latestFinSelf = financialRows[financialRows.length - 1] ?? null;
   const equityRatioSelf =
     latestFinSelf?.equityRatio != null ? latestFinSelf.equityRatio * 100 : null;
+  // Trailing dividend yield (Yahoo dividend history is more accurate than
+  // statement's annual dividend for current yield).
+  const trailingAnnualDiv = (() => {
+    if (dividends.length === 0) return null;
+    const oneYearAgo = new Date();
+    oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+    const cutoff = oneYearAgo.toISOString().slice(0, 10);
+    const recent = dividends.filter((d) => d.date >= cutoff);
+    if (recent.length === 0) return null;
+    return recent.reduce((s, d) => s + d.amount, 0);
+  })();
+  const selfYield =
+    trailingAnnualDiv != null && latestPrice != null && latestPrice !== 0
+      ? (trailingAnnualDiv / latestPrice) * 100
+      : null;
+
   const selfRow: ComparisonRow = {
     code,
     ticker: stock.ticker,
@@ -283,6 +308,7 @@ export default async function StockDetail({ params }: PageProps) {
     equityRatio: equityRatioSelf,
     forecastSalesYoY: forecast?.salesYoYImplied ?? null,
     forecastProfitYoY: forecast?.profitYoYImplied ?? null,
+    dividendYield: selfYield,
   };
   const sortedPeers = [...peerMetrics].sort((a, b) => {
     const av = a.salesYoY ?? Number.NEGATIVE_INFINITY;
@@ -500,8 +526,14 @@ export default async function StockDetail({ params }: PageProps) {
       </section>
 
       {peers.length > 0 && (
-        <PeerComparisonTable rows={comparisonRows} sectorName={stock.sector33Name} />
+        <PeerComparisonTable
+          rows={comparisonRows}
+          sectorName={stock.sector33Name}
+          peerCodes={peers.map((p) => p.code)}
+        />
       )}
+
+      <DividendSection summary={summarizeDividends(dividends, latestPrice)} />
 
       {discoveryWithForecasts.length > 0 && (
         <section className="rounded-2xl border border-emerald-200 dark:border-emerald-900/50 bg-gradient-to-br from-emerald-50 to-white dark:from-emerald-950/30 dark:to-neutral-900 p-5">

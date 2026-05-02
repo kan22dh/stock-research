@@ -39,7 +39,12 @@ export default async function WatchlistPage() {
         const past = yahoo.bars[idx]?.close;
         ret1M = pct(latestPrice, past ?? null);
       }
-      return { ...w, latestPrice, dayChange, ret1M, latestFin, forecast: fc };
+      // Dividend yield from latest annual dividend / live price
+      const dividendYield =
+        latestFin?.dividend != null && latestPrice != null && latestPrice !== 0
+          ? (latestFin.dividend / latestPrice) * 100
+          : null;
+      return { ...w, latestPrice, dayChange, ret1M, dividendYield, latestFin, forecast: fc };
     }),
   );
 
@@ -72,6 +77,7 @@ export default async function WatchlistPage() {
                   <th className="text-right px-4 py-2.5 font-medium whitespace-nowrap">1ヶ月</th>
                   <th className="text-right px-4 py-2.5 font-medium whitespace-nowrap">売上YoY</th>
                   <th className="text-right px-4 py-2.5 font-medium whitespace-nowrap">予想売上YoY</th>
+                  <th className="text-right px-4 py-2.5 font-medium whitespace-nowrap">配当利回り</th>
                   <th className="text-left px-4 py-2.5 font-medium">業種</th>
                   <th className="px-4 py-2.5" />
                 </tr>
@@ -151,6 +157,9 @@ export default async function WatchlistPage() {
                       {w.forecast?.salesYoYImplied != null
                         ? `${w.forecast.salesYoYImplied > 0 ? "+" : ""}${w.forecast.salesYoYImplied.toFixed(1)}%`
                         : "—"}
+                    </td>
+                    <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap">
+                      {w.dividendYield != null ? `${w.dividendYield.toFixed(2)}%` : "—"}
                     </td>
                     <td className="px-4 py-2.5 text-xs text-neutral-500 whitespace-nowrap">
                       {w.stock.sector33Name ?? "—"}
