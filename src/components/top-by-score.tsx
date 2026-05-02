@@ -1,6 +1,9 @@
 import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { investmentScore, scoreColor } from "@/lib/investment-score";
+import { fetchYahoo } from "@/lib/yahoo-finance";
+
+export const revalidate = 300;
 
 export async function TopByScore() {
   const stocks = await prisma.listedStock.findMany({
@@ -11,39 +14,45 @@ export async function TopByScore() {
     include: {
       financials: { orderBy: { fiscalYearEnd: "desc" }, take: 1 },
       forecast: true,
-      prices: { orderBy: { date: "desc" }, take: 1 },
     },
   });
 
+  // Score with LIVE price (Yahoo) for accurate PER. Fall back to most recent
+  // cached close if Yahoo unavailable. Limit concurrent Yahoo calls for safety.
   type Scored = { code: string; ticker: string; name: string; sector33Name: string | null; total: number };
   const scored: Scored[] = [];
-  for (const s of stocks) {
-    const f = s.financials[0];
-    if (!f) continue;
-    const price = s.prices[0]?.close ?? null;
-    const eps = f.eps ?? null;
-    const per = price != null && eps != null && eps !== 0 ? price / eps : null;
-    const roe =
-      f.netIncome != null && f.equity != null && f.equity !== 0
-        ? (f.netIncome / f.equity) * 100
-        : null;
-    const equityRatio = f.equityRatio != null ? f.equityRatio * 100 : null;
-    const score = investmentScore({
-      salesYoY: f.salesYoY,
-      roe,
-      per,
-      equityRatio,
-      forecastSalesYoY: s.forecast?.salesYoYImplied ?? null,
-    });
-    if (score == null) continue;
-    scored.push({
-      code: s.code,
-      ticker: s.ticker,
-      name: s.name,
-      sector33Name: s.sector33Name,
-      total: score.total,
-    });
-  }
+  // Process all in parallel — Yahoo handles concurrent calls fine
+  const results = await Promise.all(
+    stocks.map(async (s) => {
+      const f = s.financials[0];
+      if (!f) return null;
+      const yahoo = await fetchYahoo(s.code, "1mo", 300).catch(() => null);
+      const price = yahoo?.regularMarketPrice ?? null;
+      const eps = f.eps ?? null;
+      const per = price != null && eps != null && eps !== 0 ? price / eps : null;
+      const roe =
+        f.netIncome != null && f.equity != null && f.equity !== 0
+          ? (f.netIncome / f.equity) * 100
+          : null;
+      const equityRatio = f.equityRatio != null ? f.equityRatio * 100 : null;
+      const score = investmentScore({
+        salesYoY: f.salesYoY,
+        roe,
+        per,
+        equityRatio,
+        forecastSalesYoY: s.forecast?.salesYoYImplied ?? null,
+      });
+      if (score == null) return null;
+      return {
+        code: s.code,
+        ticker: s.ticker,
+        name: s.name,
+        sector33Name: s.sector33Name,
+        total: score.total,
+      } as Scored;
+    }),
+  );
+  for (const r of results) if (r) scored.push(r);
 
   scored.sort((a, b) => b.total - a.total);
   const top = scored.slice(0, 5);
