@@ -50,13 +50,23 @@ export default async function StockDetail({ params }: PageProps) {
     })
     .catch(() => null);
 
-  // Read prices from cache immediately; refresh in background so a rate-limited
-  // sync doesn't slow the page or block render.
-  const prices = await prisma.priceCache.findMany({
+  // First, check if we already have prices cached. If yes, render immediately
+  // and refresh in background (fast UX). If not, await the sync so the chart
+  // has data on first visit.
+  let prices = await prisma.priceCache.findMany({
     where: { code },
     orderBy: { date: "asc" },
   });
-  syncPricesIfStale(code).catch(() => null);
+  if (prices.length === 0) {
+    // First visit — must wait for the API call (or it fails on rate limit)
+    await syncPricesIfStale(code).catch(() => null);
+    prices = await prisma.priceCache.findMany({
+      where: { code },
+      orderBy: { date: "asc" },
+    });
+  } else {
+    syncPricesIfStale(code).catch(() => null);
+  }
 
   // Read financial data + forecast from cache. Background-refresh without blocking render.
   const [financialRows, forecast] = await Promise.all([
@@ -360,7 +370,18 @@ export default async function StockDetail({ params }: PageProps) {
         <div className="px-2 pb-2 text-sm font-medium text-neutral-600 dark:text-neutral-400">
           ローソク足チャート（日足） / 出来高
         </div>
-        <CandleChart data={candleData} />
+        {candleData.length === 0 ? (
+          <div className="h-[460px] flex flex-col items-center justify-center gap-2 text-sm text-neutral-500 border border-dashed rounded-xl">
+            <div className="text-amber-600 dark:text-amber-400">
+              ⏳ 株価データを取得できませんでした
+            </div>
+            <div className="text-xs">
+              J-Quants 無料プランのレート制限の可能性があります。数分後にページを再読込してください。
+            </div>
+          </div>
+        ) : (
+          <CandleChart data={candleData} />
+        )}
       </section>
 
       <div className="grid gap-4 lg:grid-cols-2">
