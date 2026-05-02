@@ -18,6 +18,7 @@ import { WatchToggle } from "@/components/watch-toggle";
 import { fetchYahoo, fetchYahooDividends } from "@/lib/yahoo-finance";
 import { summarizeDividends } from "@/lib/dividend-summary";
 import { DividendSection } from "@/components/dividend-section";
+import { FYTrendChart, type FYTrendBar } from "@/components/fy-trend-chart";
 import { AiAnalyze } from "@/components/ai-analyze";
 import { AutoDiagnose } from "@/components/auto-diagnose";
 import { InvestmentScoreCard } from "@/components/investment-score-card";
@@ -638,9 +639,42 @@ export default async function StockDetail({ params }: PageProps) {
         </section>
       )}
 
+      {annualSummaries.length > 0 && (() => {
+        const recent: FYTrendBar[] = annualSummaries.slice(-5).map((s) => ({
+          fiscalYearEnd: s.fiscalYearEnd,
+          netSales: s.netSales,
+          netIncome: s.netIncome,
+          isForecast: false,
+        }));
+        if (forecast) {
+          recent.push({
+            fiscalYearEnd: forecast.forFiscalYearEnd,
+            netSales: forecast.netSales,
+            netIncome: forecast.netIncome,
+            isForecast: true,
+          });
+        }
+        return (
+          <section className="rounded-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-neutral-900 p-5 space-y-5">
+            <h2 className="text-sm font-semibold flex items-center gap-2">
+              業績推移
+              {forecast && (
+                <span className="text-[10px] text-sky-700 dark:text-sky-400 font-normal">
+                  （ハッチ部分は会社予想）
+                </span>
+              )}
+            </h2>
+            <div className="grid gap-6 sm:grid-cols-2">
+              <FYTrendChart bars={recent} metric="netSales" label="売上高" />
+              <FYTrendChart bars={recent} metric="netIncome" label="純利益" />
+            </div>
+          </section>
+        );
+      })()}
+
       {annualSummaries.length > 0 && (
         <section className="rounded-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-neutral-900 p-5">
-          <h2 className="text-sm font-semibold mb-3">業績推移（通期）</h2>
+          <h2 className="text-sm font-semibold mb-3">業績推移（通期テーブル）</h2>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="text-neutral-500">
