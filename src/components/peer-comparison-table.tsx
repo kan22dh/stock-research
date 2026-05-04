@@ -48,6 +48,11 @@ export function PeerComparisonTable({ rows, sectorName, peerCodes }: Props) {
           )}
         </div>
       </div>
+      {peersWithFin === 0 && peerCodes && selfCode && (
+        <div className="mx-2 mb-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
+          ⚠ 同業他社の PER/PBR/ROE/YoY が未取得です。<strong>右上の「📊 同業他社の財務を一括取得」ボタン</strong>を押すと約50秒で取得します（株価は Yahoo Finance から既にリアルタイム表示中）。
+        </div>
+      )}
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="text-neutral-500 border-b border-black/10 dark:border-white/10">
