@@ -90,15 +90,27 @@ export default async function StockDetail({ params }: PageProps) {
     });
   }
 
-  // Read financial data + forecast from cache. Background-refresh without blocking render.
-  const [financialRows, forecast] = await Promise.all([
-    prisma.financialCache.findMany({
-      where: { code },
-      orderBy: { fiscalYearEnd: "asc" },
-    }),
-    prisma.forecast.findUnique({ where: { code } }),
-  ]);
-  syncFinancialsIfStale(code).catch(() => null);
+  // Read financial data + forecast from cache. If empty (first-visit stock),
+  // await the sync so the selected stock's metrics render correctly. For
+  // re-visits, trust the cache and refresh in background.
+  let financialRows = await prisma.financialCache.findMany({
+    where: { code },
+    orderBy: { fiscalYearEnd: "asc" },
+  });
+  let forecast = await prisma.forecast.findUnique({ where: { code } });
+  if (financialRows.length === 0) {
+    // First visit — await sync so PER/PBR/ROE/etc are populated
+    await syncFinancialsIfStale(code).catch(() => null);
+    [financialRows, forecast] = await Promise.all([
+      prisma.financialCache.findMany({
+        where: { code },
+        orderBy: { fiscalYearEnd: "asc" },
+      }),
+      prisma.forecast.findUnique({ where: { code } }),
+    ]);
+  } else {
+    syncFinancialsIfStale(code).catch(() => null);
+  }
 
   const annualSummaries: FiscalYearSummary[] = financialRows.map((f) => ({
     fiscalYearEnd: f.fiscalYearEnd,
