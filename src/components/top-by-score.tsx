@@ -5,10 +5,15 @@ import { fetchYahoo } from "@/lib/yahoo-finance";
 
 export const revalidate = 300;
 
+const SMALL = ["TOPIX Small 1", "TOPIX Small 2"];
+
 export async function TopByScore() {
-  const stocks = await prisma.listedStock.findMany({
+  // Prefer small caps (matches user's growth-investor target), but fall back
+  // to ANY cached stock when the small-cap cache is sparse — better to show
+  // SOMETHING useful than nothing.
+  let stocks = await prisma.listedStock.findMany({
     where: {
-      scaleCategory: { in: ["TOPIX Small 1", "TOPIX Small 2"] },
+      scaleCategory: { in: SMALL },
       financials: { some: {} },
     },
     include: {
@@ -16,12 +21,26 @@ export async function TopByScore() {
       forecast: true,
     },
   });
+  let mode: "small" | "all" = "small";
+  if (stocks.length < 5) {
+    stocks = await prisma.listedStock.findMany({
+      where: { financials: { some: {} } },
+      include: {
+        financials: { orderBy: { fiscalYearEnd: "desc" }, take: 1 },
+        forecast: true,
+      },
+    });
+    mode = "all";
+  }
 
-  // Score with LIVE price (Yahoo) for accurate PER. Fall back to most recent
-  // cached close if Yahoo unavailable. Limit concurrent Yahoo calls for safety.
-  type Scored = { code: string; ticker: string; name: string; sector33Name: string | null; total: number };
-  const scored: Scored[] = [];
-  // Process all in parallel — Yahoo handles concurrent calls fine
+  type Scored = {
+    code: string;
+    ticker: string;
+    name: string;
+    sector33Name: string | null;
+    scaleCategory: string | null;
+    total: number;
+  };
   const results = await Promise.all(
     stocks.map(async (s) => {
       const f = s.financials[0];
@@ -48,21 +67,22 @@ export async function TopByScore() {
         ticker: s.ticker,
         name: s.name,
         sector33Name: s.sector33Name,
+        scaleCategory: s.scaleCategory,
         total: score.total,
       } as Scored;
     }),
   );
-  for (const r of results) if (r) scored.push(r);
-
+  const scored = results.filter((r): r is Scored => r != null);
   scored.sort((a, b) => b.total - a.total);
   const top = scored.slice(0, 5);
   if (top.length === 0) return null;
 
   return (
     <section className="space-y-3">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         <h2 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300">
-          ⭐ 投資魅力スコア上位（小型株）
+          ⭐ 投資魅力スコア上位
+          {mode === "small" ? "（小型株）" : "（取得済全銘柄）"}
         </h2>
         <span className="text-xs text-neutral-500">
           成長＋収益＋割安＋安全＋加速の複合 (0-100)
@@ -86,6 +106,11 @@ export async function TopByScore() {
                 <span className="text-xs text-neutral-500 shrink-0 hidden sm:inline">
                   {s.sector33Name}
                 </span>
+                {mode === "all" && s.scaleCategory && (
+                  <span className="text-[10px] text-neutral-400 shrink-0 hidden md:inline">
+                    {s.scaleCategory}
+                  </span>
+                )}
               </div>
               <div className={`text-lg font-bold tabular-nums shrink-0 ${scoreColor(s.total)}`}>
                 {s.total.toFixed(0)}

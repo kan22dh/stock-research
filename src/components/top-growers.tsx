@@ -2,18 +2,29 @@ import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { formatYen } from "@/lib/financial-metrics";
 
+const SMALL = ["TOPIX Small 1", "TOPIX Small 2"];
+
 export async function TopGrowers() {
-  const top = await prisma.financialCache.findMany({
+  // Prefer small caps, fall back to any cached stock when small caps sparse.
+  let top = await prisma.financialCache.findMany({
     where: {
       salesYoY: { not: null },
-      stock: {
-        scaleCategory: { in: ["TOPIX Small 1", "TOPIX Small 2"] },
-      },
+      stock: { scaleCategory: { in: SMALL } },
     },
     orderBy: { salesYoY: "desc" },
     take: 5,
     include: { stock: true },
   });
+  let mode: "small" | "all" = "small";
+  if (top.length < 3) {
+    top = await prisma.financialCache.findMany({
+      where: { salesYoY: { not: null } },
+      orderBy: { salesYoY: "desc" },
+      take: 5,
+      include: { stock: true },
+    });
+    mode = "all";
+  }
 
   if (top.length === 0) return null;
 
@@ -21,7 +32,8 @@ export async function TopGrowers() {
     <section className="space-y-3">
       <div className="flex items-baseline justify-between">
         <h2 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300">
-          🚀 取得済の小型株 売上YoY ベスト5
+          🚀 売上YoY ベスト5
+          {mode === "small" ? "（小型株）" : "（取得済全銘柄）"}
         </h2>
         <Link
           href="/screener?sort=growth"
@@ -51,8 +63,14 @@ export async function TopGrowers() {
                   売上 {formatYen(t.netSales, { compact: true })}
                 </span>
                 {t.salesYoY != null && (
-                  <span className="text-emerald-600 dark:text-emerald-400 font-bold tabular-nums">
-                    +{t.salesYoY.toFixed(1)}%
+                  <span
+                    className={`font-bold tabular-nums ${
+                      t.salesYoY > 0
+                        ? "text-emerald-600 dark:text-emerald-400"
+                        : "text-red-600 dark:text-red-400"
+                    }`}
+                  >
+                    {t.salesYoY > 0 ? "+" : ""}{t.salesYoY.toFixed(1)}%
                   </span>
                 )}
               </div>

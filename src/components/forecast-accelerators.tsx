@@ -1,14 +1,14 @@
 import Link from "next/link";
 import { prisma } from "@/lib/db";
 
+const SMALL = ["TOPIX Small 1", "TOPIX Small 2"];
+
 // Stocks where company forecast YoY > current actual YoY = acceleration expected.
-// Limit to small-caps for the user's target.
+// Prefer small caps; fall back to all cached stocks when sparse.
 export async function ForecastAccelerators() {
-  const accelerators = await prisma.forecast.findMany({
+  let accelerators = await prisma.forecast.findMany({
     where: {
-      stock: {
-        scaleCategory: { in: ["TOPIX Small 1", "TOPIX Small 2"] },
-      },
+      stock: { scaleCategory: { in: SMALL } },
       salesYoYImplied: { not: null },
     },
     include: {
@@ -17,6 +17,16 @@ export async function ForecastAccelerators() {
       },
     },
   });
+  if (accelerators.length < 3) {
+    accelerators = await prisma.forecast.findMany({
+      where: { salesYoYImplied: { not: null } },
+      include: {
+        stock: {
+          include: { financials: { orderBy: { fiscalYearEnd: "desc" }, take: 1 } },
+        },
+      },
+    });
+  }
 
   const ranked = accelerators
     .map((f) => {
@@ -25,7 +35,7 @@ export async function ForecastAccelerators() {
       const accel = actual != null ? forecast - actual : forecast;
       return { f, actual, forecast, accel };
     })
-    .filter((r) => r.forecast >= 5) // forecast meaningful growth
+    .filter((r) => r.forecast >= 0) // any positive growth forecast counts
     .sort((a, b) => b.accel - a.accel)
     .slice(0, 5);
 
