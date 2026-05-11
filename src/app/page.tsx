@@ -15,7 +15,7 @@ const EXAMPLE_STOCKS = [
 ];
 
 export default async function Home() {
-  const [watch, history, stockCount] = await Promise.all([
+  const [watch, history, stockCount, finCount] = await Promise.all([
     prisma.watchlist.findMany({
       take: 6,
       orderBy: { createdAt: "desc" },
@@ -27,7 +27,11 @@ export default async function Home() {
       include: { stock: true },
     }),
     prisma.listedStock.count(),
+    prisma.financialCache
+      .groupBy({ by: ["code"] })
+      .then((g) => g.length),
   ]);
+  const dataMaturity = finCount < 10 ? "low" : finCount < 50 ? "med" : "high";
 
   return (
     <div className="space-y-8">
@@ -43,6 +47,16 @@ export default async function Home() {
       {stockCount === 0 && (
         <div className="rounded-lg border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/30 px-4 py-3 text-sm text-amber-800 dark:text-amber-400">
           上場銘柄リストが未取得です。検索すると自動取得します（初回は数秒かかります）。
+        </div>
+      )}
+
+      {stockCount > 0 && dataMaturity === "low" && (
+        <div className="rounded-lg border border-sky-200 dark:border-sky-900/50 bg-sky-50 dark:bg-sky-950/30 px-4 py-3 text-sm text-sky-800 dark:text-sky-300">
+          💡 財務データを取得中（{finCount} / 約30社目安）。
+          <Link href="/screener" className="underline mx-1 hover:text-sky-900 dark:hover:text-sky-200">
+            スクリーナーの「📊 一括取得」ボタン
+          </Link>
+          を押すと、投資魅力スコア・トップグロワー等の各ウィジェットが充実します。
         </div>
       )}
 
