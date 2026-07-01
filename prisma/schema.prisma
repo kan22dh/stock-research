@@ -29,6 +29,8 @@ model ListedStock {
   financials FinancialCache[]
   forecast   Forecast?
   history    BrowseHistory[]
+  momentum   Momentum?
+  positions  Position[]
 
   @@index([ticker])
   @@index([name])
@@ -119,4 +121,73 @@ model SyncLog {
   key       String   @id // "listed_info" | "prices:{code}" | "financials:{code}" | "id_token"
   payload   String?
   syncedAt  DateTime @updatedAt
+}
+
+// Price-momentum snapshot per stock, refreshed from Yahoo Finance (no J-Quants
+// rate-limit concerns). Powers RS Rating (percentile, computed at read-time
+// across all rows) and Minervini Trend Template technical scoring.
+model Momentum {
+  code           String   @id
+  price          Float?
+  return1m       Float?   // %
+  return3m       Float?   // %
+  return6m       Float?   // %
+  return9m       Float?   // %
+  return12m      Float?   // %
+  rsRaw          Float?   // IBD-style weighted momentum ratio: (2*Q1+Q2+Q3+Q4)/5
+  ma50           Float?
+  ma150          Float?
+  ma200          Float?
+  high52w        Float?
+  low52w         Float?
+  // Technical Trend Template conditions excluding RS Rating (0-7; the 8th
+  // condition, RS Rating >= 70, is combined at read-time once percentiles
+  // across the universe are known).
+  technicalScore Int      @default(0)
+  technicalPass  Boolean  @default(false)
+  asOf           DateTime @updatedAt
+
+  stock ListedStock @relation(fields: [code], references: [code], onDelete: Cascade)
+}
+
+// Actual held positions (not just watchlist) — shares, cost basis, stop-loss.
+model Position {
+  id            Int       @id @default(autoincrement())
+  code          String
+  shares        Float
+  entryPrice    Float
+  entryDate     DateTime
+  stopLossPrice Float?
+  targetPrice   Float?
+  status        String    @default("open") // "open" | "closed"
+  closePrice    Float?
+  closeDate     DateTime?
+  notes         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  stock   ListedStock    @relation(fields: [code], references: [code], onDelete: Cascade)
+  journal JournalEntry[]
+
+  @@index([code])
+  @@index([status])
+}
+
+// Buy/sell/note journal tied to a position — records the thesis and outcome.
+model JournalEntry {
+  id         Int      @id @default(autoincrement())
+  positionId Int
+  type       String   // "buy" | "sell" | "note"
+  reason     String
+  createdAt  DateTime @default(now())
+
+  position Position @relation(fields: [positionId], references: [id], onDelete: Cascade)
+
+  @@index([positionId])
+}
+
+// Small key-value store for goal config (target amount, cash balance, etc.)
+model AppSetting {
+  key   String @id
+  value String
 }

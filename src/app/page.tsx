@@ -7,6 +7,7 @@ import { TopGrowers } from "@/components/top-growers";
 import { ForecastAccelerators } from "@/components/forecast-accelerators";
 import { TopByScore } from "@/components/top-by-score";
 import { WatchlistSummary } from "@/components/watchlist-summary";
+import { GoalTracker } from "@/components/goal-tracker";
 
 const EXAMPLE_STOCKS = [
   { code: "72030", name: "トヨタ自動車", note: "大型・自動車" },
@@ -59,6 +60,10 @@ export default async function Home() {
           を押すと、投資魅力スコア・トップグロワー等の各ウィジェットが充実します。
         </div>
       )}
+
+      <Suspense fallback={null}>
+        <GoalTracker />
+      </Suspense>
 
       <Suspense fallback={null}>
         <WatchlistSummary />

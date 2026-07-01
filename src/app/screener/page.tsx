@@ -3,8 +3,11 @@ import { prisma } from "@/lib/db";
 import { syncListedInfoIfStale } from "@/lib/sync";
 import { JQuantsAuthError } from "@/lib/jquants";
 import { BulkSyncButton } from "@/components/bulk-sync-button";
+import { MomentumSyncButton } from "@/components/momentum-sync-button";
 import { formatYen, formatPercent } from "@/lib/financial-metrics";
 import { investmentScore, scoreColor } from "@/lib/investment-score";
+import { computeRSRatings, rsRatingColor } from "@/lib/momentum";
+import { findSectorLaggards } from "@/lib/sector-laggards";
 
 const SMALL_SCALES = ["TOPIX Small 1", "TOPIX Small 2"];
 
@@ -12,8 +15,11 @@ type SearchParams = Promise<{
   growth?: string;
   profit?: string;
   fcGrowth?: string;
-  minRoe?: string;     // ROE >= N %
-  maxPer?: string;     // PER <= N
+  minRoe?: string; // ROE >= N %
+  maxPer?: string; // PER <= N
+  minRS?: string; // RS Rating >= N (1-99)
+  trendTemplate?: string; // "1" = require 7/7 technical + RS>=70
+  strategy?: string; // "laggard" = Ozaki-style sector laggard scan
   sort?: string;
 }>;
 
@@ -28,6 +34,9 @@ export default async function ScreenerPage({
   const minFcGrowth = sp.fcGrowth ? Number(sp.fcGrowth) : -9999;
   const minRoe = sp.minRoe ? Number(sp.minRoe) : -9999;
   const maxPer = sp.maxPer ? Number(sp.maxPer) : 99999;
+  const minRS = sp.minRS ? Number(sp.minRS) : 0;
+  const requireTrendTemplate = sp.trendTemplate === "1";
+  const strategy = sp.strategy ?? "";
   const sortKey = sp.sort ?? "growth";
 
   let authError: string | null = null;
@@ -49,10 +58,11 @@ export default async function ScreenerPage({
       scaleCategory: true,
     },
   });
+  const codes = smallStocks.map((s) => s.code);
 
   // Get latest financial cache per code (max fiscalYearEnd)
   const allFin = await prisma.financialCache.findMany({
-    where: { code: { in: smallStocks.map((s) => s.code) } },
+    where: { code: { in: codes } },
     orderBy: { fiscalYearEnd: "desc" },
   });
   const latestFinByCode = new Map<string, (typeof allFin)[number]>();
@@ -62,9 +72,20 @@ export default async function ScreenerPage({
 
   // Get forecasts for all small caps
   const allForecasts = await prisma.forecast.findMany({
-    where: { code: { in: smallStocks.map((s) => s.code) } },
+    where: { code: { in: codes } },
   });
   const forecastByCode = new Map(allForecasts.map((f) => [f.code, f]));
+
+  // Momentum (RS Rating raw score + Trend Template technical score) — Yahoo-
+  // sourced, refreshed independently of J-Quants financials.
+  const allMomentum = await prisma.momentum.findMany({
+    where: { code: { in: codes } },
+  });
+  const momentumByCode = new Map(allMomentum.map((m) => [m.code, m]));
+  const rsRatings = computeRSRatings(
+    allMomentum.map((m) => ({ code: m.code, rsRaw: m.rsRaw })),
+  );
+  const withMomentumCount = allMomentum.length;
 
   // Join + filter
   type Row = {
@@ -84,23 +105,22 @@ export default async function ScreenerPage({
     hasFinancials: boolean;
   };
 
-  // Get latest price per code for PER calculation in score
-  const latestPrices = await prisma.priceCache.findMany({
-    where: { code: { in: smallStocks.map((s) => s.code) } },
-    orderBy: { date: "desc" },
-  });
-  const latestPriceByCode = new Map<string, number>();
-  for (const p of latestPrices) {
-    if (!latestPriceByCode.has(p.code)) latestPriceByCode.set(p.code, p.close);
-  }
-
-  const allRows: (Row & { score: number | null; per: number | null; roe: number | null })[] = smallStocks.map((s) => {
+  const allRows: (Row & {
+    score: number | null;
+    per: number | null;
+    roe: number | null;
+    rsRating: number | null;
+    technicalScore: number | null;
+    technicalPass: boolean;
+    trendTemplatePass: boolean;
+    return1m: number | null;
+  })[] = smallStocks.map((s) => {
     const f = latestFinByCode.get(s.code);
     const fc = forecastByCode.get(s.code);
-    const price = latestPriceByCode.get(s.code) ?? null;
+    const mom = momentumByCode.get(s.code);
+    const price = mom?.price ?? null;
     const eps = f?.eps ?? null;
-    const per =
-      price != null && eps != null && eps !== 0 ? price / eps : null;
+    const per = price != null && eps != null && eps !== 0 ? price / eps : null;
     const roe =
       f?.netIncome != null && f?.equity != null && f.equity !== 0
         ? (f.netIncome / f.equity) * 100
@@ -115,6 +135,10 @@ export default async function ScreenerPage({
           forecastSalesYoY: fc?.salesYoYImplied ?? null,
         })
       : null;
+    const rsRating = rsRatings.get(s.code) ?? null;
+    const technicalScore = mom?.technicalScore ?? null;
+    const technicalPass = mom?.technicalPass ?? false;
+    const trendTemplatePass = technicalPass && (rsRating ?? 0) >= 70;
     return {
       code: s.code,
       ticker: s.ticker,
@@ -133,25 +157,53 @@ export default async function ScreenerPage({
       score: scoreObj?.total ?? null,
       per,
       roe,
+      rsRating,
+      technicalScore,
+      technicalPass,
+      trendTemplatePass,
+      return1m: mom?.return1m ?? null,
     };
   });
 
   const totalSmallStocks = allRows.length;
   const withFinCount = allRows.filter((r) => r.hasFinancials).length;
 
-  const filtered = allRows
+  let filtered = allRows
     .filter((r) => r.hasFinancials)
     .filter((r) => (r.salesYoY ?? -9999) >= minGrowth)
     .filter((r) => (r.profitYoY ?? -9999) >= minProfit)
     .filter((r) => (r.forecastSalesYoY ?? -9999) >= minFcGrowth)
     .filter((r) => (r.roe ?? -9999) >= minRoe)
-    .filter((r) => (r.per ?? 99999) <= maxPer);
+    .filter((r) => (r.per ?? 99999) <= maxPer)
+    .filter((r) => (r.rsRating ?? 0) >= minRS)
+    .filter((r) => !requireTrendTemplate || r.trendTemplatePass);
+
+  // Ozaki-style sector laggard scan: overrides normal filtering, shows only
+  // stocks whose sector peers just moved but which haven't reacted yet.
+  let laggardGapByCode: Map<string, number> | null = null;
+  if (strategy === "laggard") {
+    const candidates = findSectorLaggards(
+      allRows
+        .filter((r) => r.hasFinancials)
+        .map((r) => ({
+          code: r.code,
+          sector33Name: r.sector33Name,
+          return1m: r.return1m,
+        })),
+    );
+    laggardGapByCode = new Map(candidates.map((c) => [c.code, c.gap]));
+    filtered = filtered.filter((r) => laggardGapByCode!.has(r.code));
+  }
 
   filtered.sort((a, b) => {
+    if (strategy === "laggard" && laggardGapByCode) {
+      return (laggardGapByCode.get(b.code) ?? 0) - (laggardGapByCode.get(a.code) ?? 0);
+    }
     if (sortKey === "profit") return (b.profitYoY ?? -9999) - (a.profitYoY ?? -9999);
     if (sortKey === "fcGrowth")
       return (b.forecastSalesYoY ?? -9999) - (a.forecastSalesYoY ?? -9999);
     if (sortKey === "score") return (b.score ?? -1) - (a.score ?? -1);
+    if (sortKey === "rs") return (b.rsRating ?? -1) - (a.rsRating ?? -1);
     if (sortKey === "ticker") return a.ticker.localeCompare(b.ticker);
     // default: growth
     return (b.salesYoY ?? -9999) - (a.salesYoY ?? -9999);
@@ -162,7 +214,7 @@ export default async function ScreenerPage({
       <header>
         <h1 className="text-2xl font-bold tracking-tight">スクリーナー</h1>
         <p className="text-sm text-neutral-600 dark:text-neutral-400 mt-1">
-          中小型株（TOPIX Small 1 / Small 2）から成長率で候補を発掘
+          中小型株（TOPIX Small 1 / Small 2）から成長率・価格モメンタムで候補を発掘
         </p>
       </header>
 
@@ -177,15 +229,17 @@ export default async function ScreenerPage({
         <div className="flex items-baseline justify-between flex-wrap gap-2">
           <h2 className="text-sm font-semibold">対象ユニバース</h2>
           <span className="text-xs text-neutral-500">
-            小型株 {totalSmallStocks}社 / 財務取得済 {withFinCount}社
+            小型株 {totalSmallStocks}社 / 財務取得済 {withFinCount}社 / 価格モメンタム取得済{" "}
+            {withMomentumCount}社
           </span>
         </div>
         <div className="text-xs text-neutral-600 dark:text-neutral-400">
-          スクリーニングするには財務データを事前に取得する必要があります（J-Quantsの個別銘柄APIから）。
-          ボタンを押すと小型株30件の財務データを取得します（J-Quants無料プランのレート制限に配慮、約3分）。
-          押すたびに未取得の銘柄が追加されます（取得済はスキップ）。
+          財務データ(J-Quants、レート制限あり)と価格モメンタム(Yahoo Finance、高速)は別々に取得します。
         </div>
-        <BulkSyncButton />
+        <div className="flex items-center gap-3 flex-wrap">
+          <BulkSyncButton />
+          <MomentumSyncButton />
+        </div>
       </section>
 
       <PresetButtons />
@@ -206,16 +260,18 @@ export default async function ScreenerPage({
         currentFcGrowth={sp.fcGrowth ?? ""}
         currentMinRoe={sp.minRoe ?? ""}
         currentMaxPer={sp.maxPer ?? ""}
+        currentMinRS={sp.minRS ?? ""}
+        currentTrendTemplate={requireTrendTemplate}
         currentSort={sortKey}
       />
 
       <section>
-        <div className="flex items-baseline justify-between mb-3">
+        <div className="flex items-baseline justify-between mb-3 flex-wrap gap-2">
           <h2 className="text-sm font-semibold">
             ヒット {filtered.length}件
-            {(minGrowth > 0 || minProfit > -1000) && (
+            {strategy === "laggard" && (
               <span className="text-xs font-normal text-neutral-500 ml-2">
-                （フィルタ適用中）
+                （尾崎式: セクター出遅れスキャン）
               </span>
             )}
           </h2>
@@ -235,6 +291,8 @@ export default async function ScreenerPage({
                   <tr>
                     <th className="text-left px-3 py-2 font-medium">銘柄</th>
                     <th className="text-right px-3 py-2 font-medium whitespace-nowrap" title="投資魅力スコア (0-100)">⭐スコア</th>
+                    <th className="text-right px-3 py-2 font-medium whitespace-nowrap" title="価格モメンタムの百分位 (1-99、IBD RS Rating方式)">RS</th>
+                    <th className="text-center px-3 py-2 font-medium whitespace-nowrap" title="Minervini Trend Template (技術7条件+RS≥70)">TT</th>
                     <th className="text-left px-3 py-2 font-medium">業種</th>
                     <th className="text-right px-3 py-2 font-medium whitespace-nowrap">直近売上</th>
                     <th className="text-right px-3 py-2 font-medium whitespace-nowrap">売上YoY</th>
@@ -261,6 +319,29 @@ export default async function ScreenerPage({
                         }`}
                       >
                         {r.score != null ? r.score.toFixed(0) : "—"}
+                      </td>
+                      <td
+                        className={`px-3 py-2 text-right tabular-nums font-bold ${
+                          r.rsRating == null ? "text-neutral-400" : rsRatingColor(r.rsRating)
+                        }`}
+                      >
+                        {r.rsRating ?? "—"}
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        {r.technicalScore != null ? (
+                          <span
+                            title={`技術条件 ${r.technicalScore}/7`}
+                            className={
+                              r.trendTemplatePass
+                                ? "text-emerald-600 dark:text-emerald-400"
+                                : "text-neutral-400"
+                            }
+                          >
+                            {r.trendTemplatePass ? "✓" : `${r.technicalScore}/7`}
+                          </span>
+                        ) : (
+                          <span className="text-neutral-300">—</span>
+                        )}
                       </td>
                       <td className="px-3 py-2 text-xs text-neutral-500">
                         {r.sector33Name ?? "—"}
@@ -324,6 +405,18 @@ export default async function ScreenerPage({
 function PresetButtons() {
   const presets: Array<{ label: string; emoji: string; href: string; desc: string }> = [
     {
+      emoji: "🏆",
+      label: "SEPA (王道)",
+      href: "/screener?growth=20&minRoe=10&trendTemplate=1&sort=rs",
+      desc: "CAN SLIM財務基準+RS Rating+Trend Template全通過",
+    },
+    {
+      emoji: "🔍",
+      label: "出遅れ(尾崎式)",
+      href: "/screener?strategy=laggard",
+      desc: "同業他社が急騰したのにまだ反応していない銘柄",
+    },
+    {
       emoji: "🚀",
       label: "高成長",
       href: "/screener?growth=20&sort=growth",
@@ -348,7 +441,7 @@ function PresetButtons() {
       desc: "会社予想売上YoY ≥15%",
     },
     {
-      emoji: "🏆",
+      emoji: "💰",
       label: "高ROE割安",
       href: "/screener?minRoe=15&maxPer=15&sort=score",
       desc: "ROE≥15%, PER≤15倍",
@@ -389,6 +482,8 @@ function FilterForm({
   currentFcGrowth,
   currentMinRoe,
   currentMaxPer,
+  currentMinRS,
+  currentTrendTemplate,
   currentSort,
 }: {
   currentGrowth: string;
@@ -396,6 +491,8 @@ function FilterForm({
   currentFcGrowth: string;
   currentMinRoe: string;
   currentMaxPer: string;
+  currentMinRS: string;
+  currentTrendTemplate: boolean;
   currentSort: string;
 }) {
   return (
@@ -482,6 +579,35 @@ function FilterForm({
           <p className="text-xs text-neutral-500 mt-1">割安さ</p>
         </div>
         <div>
+          <label htmlFor="minRS" className="block text-xs font-medium mb-1.5 text-neutral-600 dark:text-neutral-400">
+            RS Rating 最低 (1-99)
+          </label>
+          <input
+            type="number"
+            id="minRS"
+            name="minRS"
+            step="1"
+            min="1"
+            max="99"
+            defaultValue={currentMinRS}
+            placeholder="(無制限)"
+            className="w-full rounded-lg border border-black/15 dark:border-white/15 bg-white dark:bg-neutral-900 px-3 py-1.5 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-neutral-900 dark:focus:ring-white"
+          />
+          <p className="text-xs text-neutral-500 mt-1">価格モメンタムの強さ</p>
+        </div>
+        <div className="flex items-end pb-1.5">
+          <label className="inline-flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              name="trendTemplate"
+              value="1"
+              defaultChecked={currentTrendTemplate}
+              className="rounded border-black/25 dark:border-white/25"
+            />
+            Trend Template全通過のみ
+          </label>
+        </div>
+        <div>
           <label htmlFor="sort" className="block text-xs font-medium mb-1.5 text-neutral-600 dark:text-neutral-400">
             並び順
           </label>
@@ -492,6 +618,7 @@ function FilterForm({
             className="w-full rounded-lg border border-black/15 dark:border-white/15 bg-white dark:bg-neutral-900 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-900 dark:focus:ring-white"
           >
             <option value="score">⭐スコア (高い順)</option>
+            <option value="rs">RS Rating (高い順)</option>
             <option value="growth">売上YoY (高い順)</option>
             <option value="profit">純利益YoY (高い順)</option>
             <option value="fcGrowth">予想売上YoY (高い順)</option>
