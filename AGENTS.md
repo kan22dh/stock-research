@@ -9,11 +9,33 @@ Help the user (a beginner Japanese retail investor) discover **small-cap growth 
 ## Stack
 
 - Next.js 16 (App Router, React 19), TypeScript, Tailwind v4
-- Prisma 6 + SQLite (`prisma/dev.db`, gitignored)
+- Prisma 6 + PostgreSQL (Vercel Prisma Postgres marketplace integration; `DATABASE_URL` is the SAME value in `.env` and Vercel prod env, so local scripts write straight to production data)
 - lightweight-charts (TradingView) for candlesticks & area charts
-- @anthropic-ai/sdk for AI analysis (Claude Haiku 4.5 with prompt caching)
-- J-Quants API v2 (X-API-Key auth) — Japanese equity data, 12-week delay on free plan
-- FRED CSV (no auth) — US macro indicators
+- @anthropic-ai/sdk for AI analysis (Claude Haiku 4.5 with prompt caching) — disabled until `ANTHROPIC_API_KEY` is set
+- J-Quants API v2 (X-API-Key auth) — Japanese equity **financials/forecasts only** (12-week delayed, rate-limited ~10 req/min)
+- Yahoo Finance unofficial chart API — **primary price source** (real-time-ish, no auth, no meaningful rate limit, 2-5y history)
+- Stooq CSV — real-time forex/commodities/major indices
+- FRED CSV (no auth) — slower US macro indicators (rates, CPI, unemployment)
+
+## Design philosophy (post-2026-07 research pivot)
+
+This app used to be a pure "browse/compare" dashboard. A research pass into audited
+winning-trader systems (US Investing Championship, Market Wizards) found every
+verified champion (Minervini, Ryan, Zanger) converges on the same stack: price
+**momentum ranking** + strict **technical filtering** + **position risk management**
++ **journaling** — see `RESEARCH_WINNING_SYSTEMS.md` for the full writeup and
+sourcing. The app was extended accordingly rather than rebuilt; the fundamentals
+screener/chart/comparison layer stayed, four new layers were added on top:
+
+1. RS Rating (`lib/momentum.ts`) — IBD-style price-momentum percentile
+2. Trend Template (`lib/momentum.ts`) — Minervini's 7 technical MA/52w conditions
+3. Position tracking (`Position`/`JournalEntry` models, `/positions`) — real holdings, stop-loss, buy/sell rationale (NOT the same thing as `Watchlist`, which is just a bookmark list)
+4. Goal tracker (`lib/goal.ts`, `components/goal-tracker.tsx`) — net worth vs. a configurable target/years pace (seeded via `AppSetting`: `goalTarget`, `goalStart`, `goalStartDate`, `goalYears`, `cashBalance`)
+
+Plus a fifth complementary (non-Minervini) strategy: `lib/sector-laggards.ts`,
+based on YouTuber Ozaki Kuniaki (おーちゃん, ex-Goldman Sachs)'s "money flow"
+framework — find sector peers that haven't reacted yet to a catalyst a leader
+already reacted to.
 
 ## Codebase map
 
@@ -40,6 +62,12 @@ src/
     sectors/page.tsx
     macro/page.tsx
     compare/page.tsx          # /compare?codes=A,B
+    positions/page.tsx        # Real holdings: add/close positions, stop-loss, journal
+    actions/
+      positions.ts             # createPosition/closePosition/updateStopLoss/addJournalNote/updateCashBalance
+      momentum.ts               # bulkSyncMomentum Server Action (screener button)
+    api/
+      sync-momentum/route.ts   # POST /api/sync-momentum?limit=N&scale=small|all|financials
   components/
     candle-chart.tsx          # Candlesticks + volume + MA20/MA50 + RSI(14) + timeframe switcher
     line-chart.tsx            # Area chart for FRED series
@@ -69,23 +97,34 @@ src/
     nisa-constants.ts         # (legacy)
     ai.ts                     # Anthropic client + analyzeStock prompt
     stock-codes.ts            # 4-digit ⇄ 5-digit code conversion
+    yahoo-finance.ts          # Real-time-ish price/dividend fetch (primary price source)
+    momentum.ts               # RS Rating raw score + Trend Template 7-condition scorer
+    momentum-sync.ts          # syncMomentumIfStale/syncMomentumBatch (Yahoo-sourced, ~daily TTL)
+    sector-laggards.ts        # Ozaki-style sector-rotation laggard scan
+    goal.ts                   # Goal CAGR/pace math, reads AppSetting
 prisma/
-  schema.prisma               # Trade, ListedStock, PriceCache, FinancialCache, Watchlist, BrowseHistory, SyncLog
+  schema.prisma               # ListedStock, PriceCache, FinancialCache, Forecast, Watchlist,
+                               # BrowseHistory, SyncLog, Momentum, Position, JournalEntry, AppSetting
 ```
 
 ## Data model summary (Prisma)
 
 - `ListedStock` — master, synced from `/v2/equities/master` (~4000 rows)
-- `PriceCache` — daily OHLCV per code, synced from `/v2/equities/bars/daily`
+- `PriceCache` — daily OHLCV per code from J-Quants. **Mostly empty now** — charts read live from Yahoo instead; this table is only a fallback.
 - `FinancialCache` — annual financials per code/FY, synced from `/v2/fins/summary` filtered to `CurPerType="FY"`. Pre-computed `salesYoY`, `profitYoY`.
 - `Forecast` — latest company-issued forecast per code, extracted from F-prefix fields on most recent quarterly disclosure. Targets `CurFYEn` for 1Q/2Q/3Q rows, `NxtFYEn` for FY rows. Pre-computed `salesYoYImplied`, `profitYoYImplied` (vs latest actual FY).
+- `Momentum` — one row per code, Yahoo-sourced: `return1m/3m/6m/9m/12m`, `rsRaw` (raw IBD-style ratio — percentile-rank across rows at read-time via `computeRSRatings()`, don't compare raw values directly), `ma50/150/200`, `technicalScore`/`technicalPass` (0-7 Trend Template conditions excluding the RS-Rating-dependent 8th)
+- `Position` — real holdings (not `Watchlist`): shares, entryPrice, stopLossPrice, targetPrice, status open/closed, closePrice/closeDate
+- `JournalEntry` — tied to a `Position`, type buy/sell/note + reason text (required on close, by design — no reason, no close)
+- `AppSetting` — key/value: `goalTarget`, `goalStart`, `goalStartDate`, `goalYears`, `cashBalance`
 - `Watchlist`, `BrowseHistory`, `SyncLog`
 
 ## Sync TTLs
 
 - ListedStock: 24h
-- PriceCache: 6h
+- PriceCache: 6h (mostly irrelevant now — see note above)
 - FinancialCache + Forecast (synced together): 24h
+- Momentum: ~20h (Yahoo isn't rate-limited, so this is generous, not defensive)
 - FRED: 6h (Next.js fetch revalidate)
 
 ## J-Quants gotchas
@@ -138,3 +177,6 @@ prisma/
 - Don't try to fetch all 4000 stocks' financials — rate limits will block you
 - Don't put secrets (API keys) in commits — `.env` is gitignored
 - Don't skip the `await syncListedInfoIfStale()` on pages that need stock list — it's the lazy-init pattern
+- Don't compare `Momentum.rsRaw` values directly across stocks — it's a raw ratio, not a percentile. Always go through `computeRSRatings()` first.
+- Don't confuse `Watchlist` (bookmarks, no money involved) with `Position` (real holdings with cost basis) — they're intentionally separate models
+- Don't allow closing a `Position` without a `reason` — the whole point of the journal is that discipline is enforced at the schema/action level, not just suggested in the UI
