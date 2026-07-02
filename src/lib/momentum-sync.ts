@@ -1,6 +1,10 @@
 import { prisma } from "./db";
 import { fetchYahoo } from "./yahoo-finance";
-import { computeMomentumMetrics, computeVcp } from "./momentum";
+import {
+  computeMomentumMetrics,
+  computeVcp,
+  validBarIndices,
+} from "./momentum";
 
 // Yahoo has no meaningful rate limit (unlike J-Quants), so this can run on a
 // much shorter TTL and in larger batches than the financial sync.
@@ -17,12 +21,22 @@ export async function syncMomentumIfStale(
   const quote = await fetchYahoo(code, "2y", 3600).catch(() => null);
   if (!quote || quote.bars.length < 60) return { refreshed: false };
 
-  const m = computeMomentumMetrics(quote.bars);
+  // Drop corrupt bars, then compute momentum on dividend-adjusted closes
+  // (total-return RS) and VCP on raw OHLCV (pivot must be a tradeable price).
+  const clean = validBarIndices(quote.bars.map((b) => b.close)).map(
+    (i) => quote.bars[i],
+  );
+  if (clean.length < 60) return { refreshed: false };
+  const m = computeMomentumMetrics(
+    clean.map((b) => ({ close: b.adjClose ?? b.close })),
+  );
   if (!m) return { refreshed: false };
-  const vcp = computeVcp(quote.bars);
+  const vcp = computeVcp(clean);
+  // Display fields should be actual price levels, not dividend-adjusted ones.
+  const lastRaw = clean[clean.length - 1].close;
 
   const fields = {
-    price: m.price,
+    price: lastRaw,
     return1m: m.return1m,
     return3m: m.return3m,
     return6m: m.return6m,

@@ -36,15 +36,18 @@ model ListedStock {
   @@index([name])
 }
 
-// Daily OHLCV cache (12週遅延データ on free plan)
+// Daily OHLCV cache — Yahoo-sourced (split-adjusted). adjClose additionally
+// includes dividends; the backtest uses it so strategy vs benchmark is a fair
+// total-return comparison. Display charts keep `close` (actual price levels).
 model PriceCache {
-  code   String
-  date   DateTime
-  open   Float
-  high   Float
-  low    Float
-  close  Float
-  volume Float
+  code     String
+  date     DateTime
+  open     Float
+  high     Float
+  low      Float
+  close    Float
+  adjClose Float?
+  volume   Float
 
   stock ListedStock @relation(fields: [code], references: [code], onDelete: Cascade)
 

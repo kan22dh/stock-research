@@ -71,7 +71,9 @@ export async function syncPricesIfStale(code: string): Promise<{ count: number; 
     if (count > 0) return { count, refreshed: false };
   }
 
-  const quote = await fetchYahoo(code, "5y", 3600);
+  // 10y window so the backtest spans multiple regimes (2018 correction,
+  // 2020 COVID crash, 2022 bear) instead of one bull market.
+  const quote = await fetchYahoo(code, "10y", 3600);
   const bars = quote?.bars ?? [];
 
   if (bars.length > 0) {
@@ -85,6 +87,7 @@ export async function syncPricesIfStale(code: string): Promise<{ count: number; 
           high: b.high,
           low: b.low,
           close: b.close,
+          adjClose: b.adjClose,
           volume: b.volume,
         })),
       }),

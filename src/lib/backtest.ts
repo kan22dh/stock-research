@@ -67,26 +67,29 @@ function cleanSeries(s: Series): Series {
   return { dates, closes };
 }
 
-// Load close series for the whole universe + benchmark in one query.
+// Load close series for the whole universe + benchmark.
+// Prefers adjClose (split+dividend adjusted) so strategy vs benchmark is a
+// fair TOTAL-return comparison — raw close ignores dividends, understating
+// the TOPIX ETF (~2%/yr distributions) and any dividend-paying holdings.
+// Aggregated to one row per code in Postgres: 10y × 1,200 stocks is ~3M bars,
+// which as individual Prisma rows would blow past serverless memory/time.
 export async function loadBacktestData(): Promise<{
   byCode: Map<string, Series>;
   benchmark: Series | null;
 }> {
-  const rows = await prisma.priceCache.findMany({
-    select: { code: true, date: true, close: true },
-    orderBy: [{ code: "asc" }, { date: "asc" }],
-  });
+  const rows = await prisma.$queryRaw<
+    { code: string; dates: string[]; closes: number[] }[]
+  >`
+    SELECT code,
+           array_agg(to_char(date, 'YYYY-MM-DD') ORDER BY date) AS dates,
+           (array_agg(COALESCE("adjClose", close) ORDER BY date))::float8[] AS closes
+    FROM "PriceCache"
+    GROUP BY code
+  `;
   const byCode = new Map<string, Series>();
   for (const r of rows) {
-    let s = byCode.get(r.code);
-    if (!s) {
-      s = { dates: [], closes: [] };
-      byCode.set(r.code, s);
-    }
-    s.dates.push(r.date.toISOString().slice(0, 10));
-    s.closes.push(r.close);
+    byCode.set(r.code, cleanSeries({ dates: r.dates, closes: r.closes }));
   }
-  for (const [code, s] of byCode) byCode.set(code, cleanSeries(s));
   const benchmark = byCode.get(BENCHMARK_CODE) ?? null;
   byCode.delete(BENCHMARK_CODE);
   return { byCode, benchmark };

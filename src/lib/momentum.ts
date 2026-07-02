@@ -15,6 +15,29 @@
 
 const TRADING_DAYS_PER_MONTH = 21;
 
+// Yahoo occasionally ships corrupt bars (dropped digits, e.g. ¥37 for ¥376).
+// Returns the indices of bars whose close stays within 40% of the centered
+// 11-bar median — a genuine crash persists in neighboring bars so the median
+// follows it and the bar survives; a 1-3 bar glitch gets dropped. Shared by
+// momentum sync and (via its own copy over stored series) the backtest.
+export function validBarIndices(closes: number[]): number[] {
+  const n = closes.length;
+  const kept: number[] = [];
+  if (n < 15) {
+    for (let i = 0; i < n; i++) kept.push(i);
+    return kept;
+  }
+  for (let i = 0; i < n; i++) {
+    const lo = Math.max(0, i - 5);
+    const hi = Math.min(n, i + 6);
+    const window = closes.slice(lo, hi).sort((a, b) => a - b);
+    const median = window[Math.floor(window.length / 2)];
+    if (median > 0 && Math.abs(closes[i] / median - 1) > 0.4) continue;
+    kept.push(i);
+  }
+  return kept;
+}
+
 export type TrendTemplateCondition = { label: string; pass: boolean };
 
 export type MomentumMetrics = {

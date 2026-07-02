@@ -9,7 +9,8 @@ export type YahooBar = {
   open: number;
   high: number;
   low: number;
-  close: number;
+  close: number; // split-adjusted (Yahoo back-adjusts quote arrays for splits)
+  adjClose: number | null; // split+dividend-adjusted — use for total-return math
   volume: number;
 };
 
@@ -76,7 +77,10 @@ export async function fetchYahoo(
         result?: Array<{
           meta?: Record<string, unknown>;
           timestamp?: number[];
-          indicators?: { quote?: Array<Record<string, Array<number | null>>> };
+          indicators?: {
+            quote?: Array<Record<string, Array<number | null>>>;
+            adjclose?: Array<{ adjclose?: Array<number | null> }>;
+          };
         }>;
         error?: unknown;
       };
@@ -91,6 +95,7 @@ export async function fetchYahoo(
     const low = q.low ?? [];
     const close = q.close ?? [];
     const volume = q.volume ?? [];
+    const adjclose = r.indicators?.adjclose?.[0]?.adjclose ?? [];
 
     const bars: YahooBar[] = [];
     for (let i = 0; i < ts.length; i++) {
@@ -108,6 +113,7 @@ export async function fetchYahoo(
         high: h,
         low: l,
         close: c,
+        adjClose: adjclose[i] ?? null,
         volume: v ?? 0,
       });
     }
