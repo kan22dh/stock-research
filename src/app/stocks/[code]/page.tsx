@@ -27,6 +27,8 @@ import {
   type ComparisonRow,
 } from "@/components/peer-comparison-table";
 import { isAiEnabled } from "@/lib/ai";
+import { TechnicalPanel } from "@/components/technical-panel";
+import { Suspense } from "react";
 
 type PageProps = {
   params: Promise<{ code: string }>;
@@ -537,6 +539,10 @@ export default async function StockDetail({ params }: PageProps) {
           }}
         />
       </div>
+
+      <Suspense fallback={null}>
+        <TechnicalPanel code={code} />
+      </Suspense>
 
       <AiAnalyze code={code} aiEnabled={isAiEnabled()} />
 
