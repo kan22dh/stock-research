@@ -1,0 +1,5 @@
+-- AlterTable
+ALTER TABLE "Momentum" ADD COLUMN     "pivot" DOUBLE PRECISION,
+ADD COLUMN     "vcpPass" BOOLEAN NOT NULL DEFAULT false,
+ADD COLUMN     "vcpTightness" DOUBLE PRECISION,
+ADD COLUMN     "vcpVolumeDryUp" BOOLEAN NOT NULL DEFAULT false;

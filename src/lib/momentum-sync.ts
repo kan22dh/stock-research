@@ -1,6 +1,6 @@
 import { prisma } from "./db";
 import { fetchYahoo } from "./yahoo-finance";
-import { computeMomentumMetrics } from "./momentum";
+import { computeMomentumMetrics, computeVcp } from "./momentum";
 
 // Yahoo has no meaningful rate limit (unlike J-Quants), so this can run on a
 // much shorter TTL and in larger batches than the financial sync.
@@ -19,42 +19,33 @@ export async function syncMomentumIfStale(
 
   const m = computeMomentumMetrics(quote.bars);
   if (!m) return { refreshed: false };
+  const vcp = computeVcp(quote.bars);
+
+  const fields = {
+    price: m.price,
+    return1m: m.return1m,
+    return3m: m.return3m,
+    return6m: m.return6m,
+    return9m: m.return9m,
+    return12m: m.return12m,
+    rsRaw: m.rsRaw,
+    ma50: m.ma50,
+    ma150: m.ma150,
+    ma200: m.ma200,
+    high52w: m.high52w,
+    low52w: m.low52w,
+    technicalScore: m.technicalScore,
+    technicalPass: m.technicalPass,
+    vcpPass: vcp?.vcpPass ?? false,
+    vcpTightness: vcp?.tightness ?? null,
+    vcpVolumeDryUp: vcp?.volumeDryUp ?? false,
+    pivot: vcp?.pivot ?? null,
+  };
 
   await prisma.momentum.upsert({
     where: { code },
-    create: {
-      code,
-      price: m.price,
-      return1m: m.return1m,
-      return3m: m.return3m,
-      return6m: m.return6m,
-      return9m: m.return9m,
-      return12m: m.return12m,
-      rsRaw: m.rsRaw,
-      ma50: m.ma50,
-      ma150: m.ma150,
-      ma200: m.ma200,
-      high52w: m.high52w,
-      low52w: m.low52w,
-      technicalScore: m.technicalScore,
-      technicalPass: m.technicalPass,
-    },
-    update: {
-      price: m.price,
-      return1m: m.return1m,
-      return3m: m.return3m,
-      return6m: m.return6m,
-      return9m: m.return9m,
-      return12m: m.return12m,
-      rsRaw: m.rsRaw,
-      ma50: m.ma50,
-      ma150: m.ma150,
-      ma200: m.ma200,
-      high52w: m.high52w,
-      low52w: m.low52w,
-      technicalScore: m.technicalScore,
-      technicalPass: m.technicalPass,
-    },
+    create: { code, ...fields },
+    update: fields,
   });
 
   return { refreshed: true };

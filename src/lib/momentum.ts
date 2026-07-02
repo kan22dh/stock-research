@@ -150,6 +150,56 @@ export function computeMomentumMetrics(
   };
 }
 
+// ----- VCP (volatility contraction pattern) -----
+//
+// Heuristic approximation of Minervini's VCP setup. Backtesting showed the
+// mechanical "buy top-RS at month-end" approach underperforms partly because
+// entries happen at arbitrary prices; VCP flags stocks coiling quietly near
+// highs where a breakout entry (above `pivot`) historically carries the edge.
+// All thresholds are heuristics, not gospel — tune with care.
+
+export type VcpMetrics = {
+  vcpPass: boolean;
+  tightness: number;      // (10d high-low range) / close — smaller = tighter
+  contracting: boolean;   // 10d range much tighter than 30d range
+  volumeDryUp: boolean;   // 10d avg volume well below 50d avg
+  nearHigh: boolean;      // close within 15% of 52w high
+  pivot: number;          // 10-day high = breakout trigger price
+};
+
+export function computeVcp(
+  bars: { high: number; low: number; close: number; volume: number }[],
+): VcpMetrics | null {
+  const n = bars.length;
+  if (n < 60) return null;
+  const close = bars[n - 1].close;
+  if (!Number.isFinite(close) || close <= 0) return null;
+
+  const rangeNorm = (days: number): number => {
+    const win = bars.slice(-days);
+    const hi = Math.max(...win.map((b) => b.high));
+    const lo = Math.min(...win.map((b) => b.low));
+    return (hi - lo) / close;
+  };
+  const avgVol = (days: number): number => {
+    const win = bars.slice(-days);
+    return win.reduce((s, b) => s + b.volume, 0) / win.length;
+  };
+
+  const r10 = rangeNorm(10);
+  const r30 = rangeNorm(30);
+  const high52w = Math.max(...bars.slice(-Math.min(252, n)).map((b) => b.high));
+
+  const tightness = r10;
+  const contracting = r30 > 0 && r10 <= r30 * 0.6;
+  const volumeDryUp = avgVol(50) > 0 && avgVol(10) <= avgVol(50) * 0.85;
+  const nearHigh = high52w > 0 && close >= high52w * 0.85;
+  const pivot = Math.max(...bars.slice(-10).map((b) => b.high));
+
+  const vcpPass = tightness <= 0.1 && contracting && volumeDryUp && nearHigh;
+  return { vcpPass, tightness, contracting, volumeDryUp, nearHigh, pivot };
+}
+
 // Percentile-rank rsRaw values across the universe into IBD-style 1-99 ratings.
 export function computeRSRatings(
   rows: { code: string; rsRaw: number | null }[],

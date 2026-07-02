@@ -145,6 +145,12 @@ model Momentum {
   // across the universe are known).
   technicalScore Int      @default(0)
   technicalPass  Boolean  @default(false)
+  // VCP (volatility contraction pattern) heuristic — the "entry technique"
+  // side of Minervini's method. pivot = breakout trigger price (10-day high).
+  vcpPass        Boolean  @default(false)
+  vcpTightness   Float?   // 10-day normalized range; smaller = tighter
+  vcpVolumeDryUp Boolean  @default(false)
+  pivot          Float?
   asOf           DateTime @updatedAt
 
   stock ListedStock @relation(fields: [code], references: [code], onDelete: Cascade)

@@ -19,6 +19,7 @@ type SearchParams = Promise<{
   maxPer?: string; // PER <= N
   minRS?: string; // RS Rating >= N (1-99)
   trendTemplate?: string; // "1" = require 7/7 technical + RS>=70
+  vcp?: string; // "1" = require VCP setup (tight base near highs, volume dry-up)
   strategy?: string; // "laggard" = Ozaki-style sector laggard scan
   sort?: string;
 }>;
@@ -36,6 +37,7 @@ export default async function ScreenerPage({
   const maxPer = sp.maxPer ? Number(sp.maxPer) : 99999;
   const minRS = sp.minRS ? Number(sp.minRS) : 0;
   const requireTrendTemplate = sp.trendTemplate === "1";
+  const requireVcp = sp.vcp === "1";
   const strategy = sp.strategy ?? "";
   const sortKey = sp.sort ?? "growth";
 
@@ -113,6 +115,8 @@ export default async function ScreenerPage({
     technicalScore: number | null;
     technicalPass: boolean;
     trendTemplatePass: boolean;
+    vcpPass: boolean;
+    pivot: number | null;
     return1m: number | null;
   })[] = smallStocks.map((s) => {
     const f = latestFinByCode.get(s.code);
@@ -161,6 +165,8 @@ export default async function ScreenerPage({
       technicalScore,
       technicalPass,
       trendTemplatePass,
+      vcpPass: mom?.vcpPass ?? false,
+      pivot: mom?.pivot ?? null,
       return1m: mom?.return1m ?? null,
     };
   });
@@ -176,7 +182,8 @@ export default async function ScreenerPage({
     .filter((r) => (r.roe ?? -9999) >= minRoe)
     .filter((r) => (r.per ?? 99999) <= maxPer)
     .filter((r) => (r.rsRating ?? 0) >= minRS)
-    .filter((r) => !requireTrendTemplate || r.trendTemplatePass);
+    .filter((r) => !requireTrendTemplate || r.trendTemplatePass)
+    .filter((r) => !requireVcp || r.vcpPass);
 
   // Ozaki-style sector laggard scan: overrides normal filtering, shows only
   // stocks whose sector peers just moved but which haven't reacted yet.
@@ -293,6 +300,7 @@ export default async function ScreenerPage({
                     <th className="text-right px-3 py-2 font-medium whitespace-nowrap" title="投資魅力スコア (0-100)">⭐スコア</th>
                     <th className="text-right px-3 py-2 font-medium whitespace-nowrap" title="価格モメンタムの百分位 (1-99、IBD RS Rating方式)">RS</th>
                     <th className="text-center px-3 py-2 font-medium whitespace-nowrap" title="Minervini Trend Template (技術7条件+RS≥70)">TT</th>
+                    <th className="text-center px-3 py-2 font-medium whitespace-nowrap" title="VCPセットアップ (高値付近で収縮+出来高枯れ)。数字はピボット(ブレイクアウト水準)">VCP</th>
                     <th className="text-left px-3 py-2 font-medium">業種</th>
                     <th className="text-right px-3 py-2 font-medium whitespace-nowrap">直近売上</th>
                     <th className="text-right px-3 py-2 font-medium whitespace-nowrap">売上YoY</th>
@@ -338,6 +346,18 @@ export default async function ScreenerPage({
                             }
                           >
                             {r.trendTemplatePass ? "✓" : `${r.technicalScore}/7`}
+                          </span>
+                        ) : (
+                          <span className="text-neutral-300">—</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-center text-xs tabular-nums">
+                        {r.vcpPass ? (
+                          <span
+                            className="text-emerald-600 dark:text-emerald-400 font-semibold"
+                            title={`ピボット(ブレイクアウト水準): ¥${r.pivot?.toLocaleString() ?? "—"}`}
+                          >
+                            🧨 ¥{r.pivot != null ? Math.round(r.pivot).toLocaleString() : "—"}
                           </span>
                         ) : (
                           <span className="text-neutral-300">—</span>
@@ -409,6 +429,12 @@ function PresetButtons() {
       label: "SEPA (王道)",
       href: "/screener?growth=20&minRoe=10&trendTemplate=1&sort=rs",
       desc: "CAN SLIM財務基準+RS Rating+Trend Template全通過",
+    },
+    {
+      emoji: "🧨",
+      label: "VCPセットアップ",
+      href: "/screener?vcp=1&minRS=60&sort=rs",
+      desc: "高値付近で値幅収縮+出来高枯れ。ピボット超えがエントリー候補",
     },
     {
       emoji: "🔍",
