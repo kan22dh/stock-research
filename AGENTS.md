@@ -37,6 +37,15 @@ based on YouTuber Ozaki Kuniaki (おーちゃん, ex-Goldman Sachs)'s "money flo
 framework — find sector peers that haven't reacted yet to a catalyst a leader
 already reacted to.
 
+And a validation layer: `lib/backtest.ts` + `/backtest` — monthly-rebalanced
+point-in-time backtest of the RS/Trend-Template strategy vs TOPIX ETF (1306)
+buy-and-hold, using PriceCache (Yahoo-sourced 5y daily bars; sync via
+`POST /api/sync-prices`). Empirical results as of 2026-07 are recorded in
+`RESEARCH_WINNING_SYSTEMS.md` §7 — headline: top-10 diversification beat the
+index, top-5 concentration and mechanical monthly stop-losses both hurt
+(whipsaw). Yahoo bars occasionally contain corrupt prices (dropped digits);
+`cleanSeries()` in backtest.ts median-filters them — don't remove it.
+
 ## Codebase map
 
 ```
@@ -110,7 +119,7 @@ prisma/
 ## Data model summary (Prisma)
 
 - `ListedStock` — master, synced from `/v2/equities/master` (~4000 rows)
-- `PriceCache` — daily OHLCV per code from J-Quants. **Mostly empty now** — charts read live from Yahoo instead; this table is only a fallback.
+- `PriceCache` — daily OHLCV per code, now **Yahoo-sourced 5y bars** (`syncPricesIfStale` was switched from J-Quants to Yahoo). Doubles as the backtest data store; charts still read live Yahoo and fall back here.
 - `FinancialCache` — annual financials per code/FY, synced from `/v2/fins/summary` filtered to `CurPerType="FY"`. Pre-computed `salesYoY`, `profitYoY`.
 - `Forecast` — latest company-issued forecast per code, extracted from F-prefix fields on most recent quarterly disclosure. Targets `CurFYEn` for 1Q/2Q/3Q rows, `NxtFYEn` for FY rows. Pre-computed `salesYoYImplied`, `profitYoYImplied` (vs latest actual FY).
 - `Momentum` — one row per code, Yahoo-sourced: `return1m/3m/6m/9m/12m`, `rsRaw` (raw IBD-style ratio — percentile-rank across rows at read-time via `computeRSRatings()`, don't compare raw values directly), `ma50/150/200`, `technicalScore`/`technicalPass` (0-7 Trend Template conditions excluding the RS-Rating-dependent 8th)

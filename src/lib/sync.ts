@@ -1,10 +1,11 @@
 import { prisma } from "./db";
-import { listedInfo, dailyQuotes, statements } from "./jquants";
+import { listedInfo, statements } from "./jquants";
 import { toShortCode } from "./stock-codes";
 import { extractAnnualSummaries, extractLatestForecast } from "./financial-metrics";
+import { fetchYahoo } from "./yahoo-finance";
 
 const LISTED_INFO_TTL_MS = 24 * 60 * 60 * 1000;
-const PRICES_TTL_MS = 6 * 60 * 60 * 1000;
+const PRICES_TTL_MS = 24 * 60 * 60 * 1000; // Yahoo-sourced daily bars; refresh ~daily
 const FINANCIALS_TTL_MS = 24 * 60 * 60 * 1000;
 
 export async function syncListedInfoIfStale(): Promise<{ count: number; refreshed: boolean }> {
@@ -58,6 +59,9 @@ export async function syncListedInfoIfStale(): Promise<{ count: number; refreshe
   return { count: list.length, refreshed: true };
 }
 
+// Prices now come from Yahoo Finance (real-time-ish, 5y history), not J-Quants
+// (12-week delayed, 2y window). PriceCache doubles as the backtest data store,
+// so we persist the full 5y window.
 export async function syncPricesIfStale(code: string): Promise<{ count: number; refreshed: boolean }> {
   const key = `prices:${code}`;
   const log = await prisma.syncLog.findUnique({ where: { key } });
@@ -67,39 +71,21 @@ export async function syncPricesIfStale(code: string): Promise<{ count: number; 
     if (count > 0) return { count, refreshed: false };
   }
 
-  // Free plan covers ~2 years ending ~12 weeks (84 days) before today.
-  // Pull the maximum available window so the chart's "全期間" mode is meaningful.
-  const FREE_PLAN_DELAY_DAYS = 90;
-  const FREE_PLAN_HISTORY_MONTHS = 24;
-  const to = new Date();
-  to.setDate(to.getDate() - FREE_PLAN_DELAY_DAYS);
-  const from = new Date(to);
-  from.setMonth(from.getMonth() - FREE_PLAN_HISTORY_MONTHS);
-  const fromStr = from.toISOString().slice(0, 10);
-  const toStr = to.toISOString().slice(0, 10);
+  const quote = await fetchYahoo(code, "5y", 3600);
+  const bars = quote?.bars ?? [];
 
-  const quotes = await dailyQuotes({ code, from: fromStr, to: toStr });
-
-  const valid = quotes.filter(
-    (q) =>
-      q.Close !== null &&
-      q.Open !== null &&
-      q.High !== null &&
-      q.Low !== null,
-  );
-
-  if (valid.length > 0) {
+  if (bars.length > 0) {
     await prisma.$transaction([
       prisma.priceCache.deleteMany({ where: { code } }),
       prisma.priceCache.createMany({
-        data: valid.map((q) => ({
+        data: bars.map((b) => ({
           code,
-          date: new Date(q.Date),
-          open: q.Open as number,
-          high: q.High as number,
-          low: q.Low as number,
-          close: q.Close as number,
-          volume: (q.Volume ?? 0) as number,
+          date: new Date(b.time),
+          open: b.open,
+          high: b.high,
+          low: b.low,
+          close: b.close,
+          volume: b.volume,
         })),
       }),
     ]);
@@ -107,11 +93,11 @@ export async function syncPricesIfStale(code: string): Promise<{ count: number; 
 
   await prisma.syncLog.upsert({
     where: { key },
-    create: { key, payload: String(valid.length) },
-    update: { payload: String(valid.length) },
+    create: { key, payload: String(bars.length) },
+    update: { payload: String(bars.length) },
   });
 
-  return { count: valid.length, refreshed: true };
+  return { count: bars.length, refreshed: true };
 }
 
 export async function syncFinancialsIfStale(

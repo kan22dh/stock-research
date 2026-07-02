@@ -8,6 +8,7 @@ const NAV_ITEMS = [
   { href: "/positions", label: "ポジション" },
   { href: "/watchlist", label: "ウォッチリスト" },
   { href: "/screener", label: "スクリーナー" },
+  { href: "/backtest", label: "検証" },
   { href: "/compare", label: "比較" },
   { href: "/sectors", label: "業界" },
   { href: "/macro", label: "マクロ" },
