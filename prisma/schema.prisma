@@ -31,6 +31,7 @@ model ListedStock {
   history    BrowseHistory[]
   momentum   Momentum?
   positions  Position[]
+  signals    Signal[]
 
   @@index([ticker])
   @@index([name])
@@ -199,4 +200,22 @@ model JournalEntry {
 model AppSetting {
   key   String @id
   value String
+}
+
+// Daily signal feed, produced by the morning cron (/api/daily-refresh):
+// "pivot_breakout" — yesterday's VCP stock closed above its pivot
+// "vcp_new"        — stock newly entered VCP setup (watch candidate)
+// "stop_raise"     — open position advanced; suggest raising the stop-loss
+model Signal {
+  id        Int      @id @default(autoincrement())
+  date      String   // YYYY-MM-DD (JST) batch date
+  type      String
+  code      String
+  payload   String?  // JSON details (pivot, price, suggested stop, ...)
+  createdAt DateTime @default(now())
+
+  stock ListedStock @relation(fields: [code], references: [code], onDelete: Cascade)
+
+  @@unique([date, type, code])
+  @@index([date])
 }

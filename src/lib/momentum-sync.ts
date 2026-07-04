@@ -85,3 +85,29 @@ export async function syncMomentumBatch(
   }
   return { requested: codes.length, synced, failed };
 }
+
+// Concurrent variant for the daily cron: ~1,200 stocks sequentially takes
+// ~10 min, past the serverless limit; with 8 workers it lands around 1-2 min.
+export async function syncMomentumBatchConcurrent(
+  codes: string[],
+  concurrency = 8,
+): Promise<{ requested: number; synced: number; failed: number }> {
+  let synced = 0;
+  let failed = 0;
+  let cursor = 0;
+  async function worker() {
+    while (cursor < codes.length) {
+      const code = codes[cursor++];
+      try {
+        const r = await syncMomentumIfStale(code);
+        if (r.refreshed) synced++;
+      } catch {
+        failed++;
+      }
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, codes.length) }, worker),
+  );
+  return { requested: codes.length, synced, failed };
+}

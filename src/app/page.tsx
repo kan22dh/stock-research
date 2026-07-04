@@ -9,6 +9,7 @@ import { TopByScore } from "@/components/top-by-score";
 import { WatchlistSummary } from "@/components/watchlist-summary";
 import { GoalTracker } from "@/components/goal-tracker";
 import { StopLossAlerts } from "@/components/stop-loss-alerts";
+import { SignalsFeed } from "@/components/signals-feed";
 
 const EXAMPLE_STOCKS = [
   { code: "72030", name: "トヨタ自動車", note: "大型・自動車" },
@@ -64,6 +65,10 @@ export default async function Home() {
 
       <Suspense fallback={null}>
         <StopLossAlerts />
+      </Suspense>
+
+      <Suspense fallback={null}>
+        <SignalsFeed />
       </Suspense>
 
       <Suspense fallback={null}>
