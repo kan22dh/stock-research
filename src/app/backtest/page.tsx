@@ -9,7 +9,7 @@ import {
 import { BacktestChart } from "@/components/backtest-chart";
 import { PriceSyncButton } from "@/components/price-sync-button";
 
-export const maxDuration = 60;
+export const maxDuration = 300; // 10y × 1,200 stocks: ~12s load + ~15s compute; leave headroom on serverless
 
 type SearchParams = Promise<{
   topN?: string;
