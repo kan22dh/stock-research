@@ -37,6 +37,15 @@ based on YouTuber Ozaki Kuniaki (おーちゃん, ex-Goldman Sachs)'s "money flo
 framework — find sector peers that haven't reacted yet to a catalyst a leader
 already reacted to.
 
+And an automation layer (vercel.json crons, Hobby plan = daily granularity):
+- 07:00 JST `GET /api/daily-refresh` — snapshots VCP state, refreshes momentum
+  for the whole universe concurrently (8 workers, ~76s for 1,222 stocks),
+  diffs into `Signal` rows (pivot_breakout / vcp_new / stop_raise). `?force=1`
+  bypasses the 20h momentum TTL (needed for same-day re-runs).
+- 07:40 JST `GET /api/rolling-financials` — refreshes the 25 stalest J-Quants
+  financials per day (rate limits forbid more; full cycle ≈ 7 weeks).
+- Home renders the latest batch via `components/signals-feed.tsx`.
+
 And a validation layer: `lib/backtest.ts` + `/backtest` — monthly-rebalanced
 point-in-time backtest of the RS/Trend-Template strategy vs TOPIX ETF (1306)
 buy-and-hold, using PriceCache (Yahoo-sourced 5y daily bars; sync via
