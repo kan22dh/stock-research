@@ -1,6 +1,6 @@
 {
   "crons": [
-    { "path": "/api/daily-refresh", "schedule": "0 22 * * *" },
-    { "path": "/api/rolling-financials", "schedule": "40 22 * * *" }
+    { "path": "/api/daily-refresh", "schedule": "0 22 * * 0-4" },
+    { "path": "/api/rolling-financials", "schedule": "40 22 * * 0-4" }
   ]
 }

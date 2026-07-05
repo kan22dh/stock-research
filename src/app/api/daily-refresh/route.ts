@@ -6,6 +6,7 @@ import {
   computeDailySignals,
   jstToday,
 } from "@/lib/signals";
+import { runPaperAutopilot } from "@/lib/paper-autopilot";
 
 // Morning cron (see vercel.json): snapshot yesterday's VCP state, refresh
 // momentum for the whole universe, then diff into the day's signal feed.
@@ -36,11 +37,17 @@ async function run(req: Request) {
 
   const signals = await computeDailySignals(snapshot);
 
+  // L3: the simulated account trades the fresh signals automatically.
+  const autopilot = await runPaperAutopilot().catch((e) => ({
+    error: e instanceof Error ? e.message : String(e),
+  }));
+
   return NextResponse.json({
     date: jstToday(),
     elapsedSec: Math.round((Date.now() - t0) / 1000),
     momentum: sync,
     signals,
+    autopilot,
   });
 }
 

@@ -32,6 +32,8 @@ model ListedStock {
   momentum   Momentum?
   positions  Position[]
   signals    Signal[]
+  paperPos   PaperPosition?
+  paperTrades PaperTrade[]
 
   @@index([ticker])
   @@index([name])
@@ -200,6 +202,46 @@ model JournalEntry {
 model AppSetting {
   key   String @id
   value String
+}
+
+// ---- Paper autopilot (L3): the morning cron trades a simulated account ----
+// Same decision engine that a future kabu-station-API bot (L5) will drive;
+// only the execution adapter differs. Rules: buy pivot breakouts when the
+// market filter passes, risk 1%/trade, stop -8%, trail to price×0.92 at +10%.
+
+model PaperPosition {
+  id         Int    @id @default(autoincrement())
+  code       String @unique
+  shares     Float
+  entryPrice Float
+  entryDate  String // YYYY-MM-DD JST
+  stopPrice  Float
+  highWater  Float  // highest seen price, for trailing-stop logic
+
+  stock ListedStock @relation(fields: [code], references: [code], onDelete: Cascade)
+}
+
+model PaperTrade {
+  id        Int      @id @default(autoincrement())
+  date      String   // YYYY-MM-DD JST
+  code      String
+  side      String   // "buy" | "sell"
+  shares    Float
+  price     Float
+  pnl       Float?   // realized, sell only
+  reason    String
+  createdAt DateTime @default(now())
+
+  stock ListedStock @relation(fields: [code], references: [code], onDelete: Cascade)
+
+  @@index([date])
+}
+
+// One row per cron day: equity curve of the paper account.
+model PaperEquity {
+  date   String @id // YYYY-MM-DD JST
+  equity Float
+  cash   Float
 }
 
 // Daily signal feed, produced by the morning cron (/api/daily-refresh):
