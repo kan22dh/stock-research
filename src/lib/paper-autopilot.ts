@@ -1,85 +1,88 @@
-// L3 paper autopilot: fully automated simulated trading, executed by the
-// morning cron right after signal generation. This is the decision engine a
-// future kabu-station-API bot (L5) will reuse — only execution differs.
+// L3 paper autopilot — runs the ONLY strategy that survived validation:
+// monthly rebalance into the top-10 stocks by RS raw momentum among Trend
+// Template passers (+18.7%/yr vs TOPIX +13.4% over 10y, see
+// RESEARCH_WINNING_SYSTEMS.md §7).
 //
-// Rules (all validated or champion-sourced; see RESEARCH_WINNING_SYSTEMS.md):
-//   Market filter (M): TOPIX ETF must be above its 50-day MA, else no buys.
-//   Entry: today's pivot_breakout signals, best RS first, max 8 positions.
-//   Sizing: risk 1% of equity per trade with an 8% stop → ~12.5% of equity,
-//           capped by available cash.
-//   Exit:  close at/below stop → sell all (stop was raised along the way:
-//          at +10% from entry the stop trails to price×0.92, never lowered).
+// Deliberately absent (each tested and found harmful mechanically, §7-§8):
+//   - intra-month stop-losses (whipsaw: -8pt/yr)
+//   - daily VCP-breakout entries (+4.5%/yr vs index +13.3% — big underperform)
+//   - concentration below ~10 names (single-stock blowups dominate)
+// VCP/breakout signals remain on the home feed for DISCRETIONARY (L2/L4) use;
+// the mechanical account must not trade them.
 //
-// Honest limitation: fills happen at the morning-observed price (previous
-// close), one day after the breakout close — real fills will differ.
+// Cadence: the cron runs every weekday; this rebalances only on the first
+// run of each calendar month and otherwise just marks equity.
 
 import { prisma } from "./db";
-import { fetchYahoo } from "./yahoo-finance";
 import { jstToday } from "./signals";
 
-const START_CASH = 600_000; // mirrors the real active sleeve (NISA NTT is separate)
-const MAX_POSITIONS = 8;
-const RISK_PER_TRADE = 0.01; // 1% of equity
-const STOP_PCT = 0.08;
-const TRAIL_TRIGGER = 1.1; // +10% → start trailing
-const TRAIL_FACTOR = 0.92; // stop = price × 0.92
+const START_CASH = 600_000; // mirrors the real active sleeve
+const TOP_N = 10;
+
+async function getSetting(key: string): Promise<string | null> {
+  const row = await prisma.appSetting.findUnique({ where: { key } });
+  return row?.value ?? null;
+}
+
+async function setSetting(key: string, value: string): Promise<void> {
+  await prisma.appSetting.upsert({
+    where: { key },
+    create: { key, value },
+    update: { value },
+  });
+}
 
 async function getCash(): Promise<number> {
-  const row = await prisma.appSetting.findUnique({ where: { key: "paperCash" } });
-  if (row) return Number(row.value);
-  await prisma.appSetting.create({
-    data: { key: "paperCash", value: String(START_CASH) },
-  });
+  const v = await getSetting("paperCash");
+  if (v != null) return Number(v);
+  await setSetting("paperCash", String(START_CASH));
   return START_CASH;
-}
-
-async function setCash(v: number): Promise<void> {
-  await prisma.appSetting.upsert({
-    where: { key: "paperCash" },
-    create: { key: "paperCash", value: String(v) },
-    update: { value: String(v) },
-  });
-}
-
-// Market filter: TOPIX ETF above its 50-day MA (Yahoo live, ~3mo of bars).
-async function marketFilterPass(): Promise<boolean> {
-  const q = await fetchYahoo("13060", "6mo", 3600).catch(() => null);
-  if (!q || q.bars.length < 50) return false; // fail-safe: no data → no buys
-  const closes = q.bars.map((b) => b.adjClose ?? b.close);
-  const ma50 = closes.slice(-50).reduce((s, v) => s + v, 0) / 50;
-  const price = q.regularMarketPrice ?? closes[closes.length - 1];
-  return price > ma50;
 }
 
 export type AutopilotResult = {
   date: string;
+  rebalanced: boolean;
   sells: number;
   buys: number;
-  skippedMarketFilter: boolean;
+  holdings: number;
   equity: number;
   cash: number;
 };
 
 export async function runPaperAutopilot(): Promise<AutopilotResult> {
   const date = jstToday();
+  const month = date.slice(0, 7);
   let cash = await getCash();
   let sells = 0;
   let buys = 0;
 
-  // Current prices come from the just-refreshed Momentum table.
   const positions = await prisma.paperPosition.findMany({
     include: { stock: { include: { momentum: true } } },
   });
+  const priceOf = (p: (typeof positions)[number]): number =>
+    p.stock.momentum?.price ?? p.entryPrice;
 
-  // 1) Exits + trailing-stop maintenance.
-  for (const p of positions) {
-    const price = p.stock.momentum?.price ?? null;
-    if (price == null) continue;
+  const lastRebalance = await getSetting("paperLastRebalanceMonth");
+  const rebalanced = lastRebalance !== month;
 
-    if (price <= p.stopPrice) {
-      const proceeds = price * p.shares;
+  if (rebalanced) {
+    // Target: top-10 by rsRaw among Trend Template passers. Fewer than 10
+    // qualify in bad markets → the rest stays in cash (the strategy's
+    // built-in defensive mode, same as the validated backtest).
+    const candidates = await prisma.momentum.findMany({
+      where: { technicalPass: true, rsRaw: { not: null } },
+      orderBy: { rsRaw: "desc" },
+      take: TOP_N,
+      select: { code: true, price: true },
+    });
+    const target = new Set(candidates.map((c) => c.code));
+
+    // Sell whatever fell out of the target list.
+    for (const p of positions) {
+      if (target.has(p.code)) continue;
+      const price = priceOf(p);
       const pnl = (price - p.entryPrice) * p.shares;
-      cash += proceeds;
+      cash += price * p.shares;
       await prisma.$transaction([
         prisma.paperTrade.create({
           data: {
@@ -89,108 +92,82 @@ export async function runPaperAutopilot(): Promise<AutopilotResult> {
             shares: p.shares,
             price,
             pnl,
-            reason:
-              price >= p.entryPrice
-                ? `トレーリングストップ(¥${p.stopPrice})到達。利益確保`
-                : `損切りライン(¥${p.stopPrice})到達。規律通り撤退`,
+            reason: "月次リバランス: RS上位10圏外へ後退",
           },
         }),
         prisma.paperPosition.delete({ where: { id: p.id } }),
       ]);
       sells++;
-      continue;
     }
 
-    // Trail: once +10% from entry, keep stop at price×0.92 (never lower).
-    const newHigh = Math.max(p.highWater, price);
-    let newStop = p.stopPrice;
-    if (newHigh >= p.entryPrice * TRAIL_TRIGGER) {
-      newStop = Math.max(p.stopPrice, Math.round(newHigh * TRAIL_FACTOR * 10) / 10);
-    }
-    if (newHigh !== p.highWater || newStop !== p.stopPrice) {
-      await prisma.paperPosition.update({
-        where: { id: p.id },
-        data: { highWater: newHigh, stopPrice: newStop },
-      });
-    }
-  }
-
-  // 2) Entries from today's breakout signals.
-  const skippedMarketFilter = !(await marketFilterPass());
-  if (!skippedMarketFilter) {
-    const breakouts = await prisma.signal.findMany({
-      where: { date, type: "pivot_breakout" },
-      include: { stock: { include: { momentum: true } } },
-    });
-    // Highest RS raw first — strongest stocks get the slots.
-    breakouts.sort(
-      (a, b) => (b.stock.momentum?.rsRaw ?? 0) - (a.stock.momentum?.rsRaw ?? 0),
+    // Buy new entrants, equal-weighting the remaining cash across new slots.
+    const heldCodes = new Set(
+      (await prisma.paperPosition.findMany({ select: { code: true } })).map(
+        (p) => p.code,
+      ),
     );
-
-    for (const sig of breakouts) {
-      const openCount = await prisma.paperPosition.count();
-      if (openCount >= MAX_POSITIONS) break;
-      const price = sig.stock.momentum?.price ?? null;
-      if (price == null || price <= 0) continue;
-      const held = await prisma.paperPosition.findUnique({
-        where: { code: sig.code },
-      });
-      if (held) continue;
-
-      const posValue = await currentEquity(cash);
-      const targetValue = Math.min((posValue * RISK_PER_TRADE) / STOP_PCT, cash);
-      // S株(単元未満株)前提で1株単位。単元株(100株)縛りだと60万円の資金では
-      // リスク1%規律とほぼ全銘柄が両立しない(1単元10万円超が大半)ため。
-      // SBIのS株は売買手数料無料なのでコストモデルもそのまま成立する。
-      const shares = Math.floor(targetValue / price);
+    const entrants = candidates.filter(
+      (c) => !heldCodes.has(c.code) && c.price != null && c.price > 0,
+    );
+    for (let k = 0; k < entrants.length; k++) {
+      const c = entrants[k];
+      const slotBudget = cash / (entrants.length - k); // spread cash evenly
+      const shares = Math.floor(slotBudget / c.price!); // S株前提の1株単位
       if (shares < 1) continue;
-      const cost = shares * price;
-
+      const cost = shares * c.price!;
       cash -= cost;
       await prisma.$transaction([
         prisma.paperTrade.create({
           data: {
             date,
-            code: sig.code,
+            code: c.code,
             side: "buy",
             shares,
-            price,
-            reason: `ピボット突破シグナル。損切り¥${Math.round(price * (1 - STOP_PCT) * 10) / 10}`,
+            price: c.price!,
+            reason: "月次リバランス: RS上位10+Trend Template通過",
           },
         }),
         prisma.paperPosition.create({
           data: {
-            code: sig.code,
+            code: c.code,
             shares,
-            entryPrice: price,
+            entryPrice: c.price!,
             entryDate: date,
-            stopPrice: Math.round(price * (1 - STOP_PCT) * 10) / 10,
-            highWater: price,
+            stopPrice: 0, // 検証済み戦略に月中損切りはない(§7: 機械的損切りは有害)
+            highWater: c.price!,
           },
         }),
       ]);
       buys++;
     }
+
+    await setSetting("paperLastRebalanceMonth", month);
+    await setSetting("paperCash", String(cash));
   }
 
-  await setCash(cash);
-  const equity = await currentEquity(cash);
+  // Mark daily equity.
+  const finalPositions = await prisma.paperPosition.findMany({
+    include: { stock: { include: { momentum: true } } },
+  });
+  const equity =
+    cash +
+    finalPositions.reduce(
+      (s, p) => s + (p.stock.momentum?.price ?? p.entryPrice) * p.shares,
+      0,
+    );
   await prisma.paperEquity.upsert({
     where: { date },
     create: { date, equity, cash },
     update: { equity, cash },
   });
 
-  return { date, sells, buys, skippedMarketFilter, equity, cash };
-}
-
-async function currentEquity(cash: number): Promise<number> {
-  const positions = await prisma.paperPosition.findMany({
-    include: { stock: { include: { momentum: true } } },
-  });
-  const posValue = positions.reduce(
-    (s, p) => s + (p.stock.momentum?.price ?? p.entryPrice) * p.shares,
-    0,
-  );
-  return cash + posValue;
+  return {
+    date,
+    rebalanced,
+    sells,
+    buys,
+    holdings: finalPositions.length,
+    equity,
+    cash,
+  };
 }

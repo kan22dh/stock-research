@@ -39,7 +39,7 @@ export default async function PaperPage() {
       <header>
         <h1 className="text-2xl font-bold tracking-tight">🤖 自動運用(仮想口座)</h1>
         <p className="text-sm text-neutral-600 dark:text-neutral-400 mt-1">
-          毎朝のCronが検証済みルール(ピボット突破買い・リスク1%・損切り8%・+10%でトレーリング・地合いフィルタ)で仮想60万円を全自動売買します。
+          毎月初の朝、Cronが検証で唯一生き残った戦略「RS上位10銘柄+Trend Template・月次リバランス」(10年で年+18.7%)で仮想60万円を全自動売買します。
           実弾投入(kabuステーションAPI連携)の前提となる成績記録です。
         </p>
       </header>
@@ -114,7 +114,7 @@ export default async function PaperPage() {
                         {pnlPct.toFixed(1)}%
                       </td>
                       <td className="px-3 py-2 text-right tabular-nums text-neutral-500">
-                        ¥{p.stopPrice.toLocaleString()}
+                        {p.stopPrice > 0 ? `¥${p.stopPrice.toLocaleString()}` : "—(月次入替)"}
                       </td>
                     </tr>
                   );
@@ -168,9 +168,10 @@ export default async function PaperPage() {
       <section className="rounded-xl border border-black/10 dark:border-white/10 bg-neutral-50 dark:bg-neutral-800/30 px-5 py-4 text-xs text-neutral-600 dark:text-neutral-400 space-y-1.5">
         <div className="font-semibold text-neutral-700 dark:text-neutral-300">この口座の意味</div>
         <div>・実弾自動売買(L5: kabuステーションAPI)へ進む判断材料です。3〜6ヶ月の記録でTOPIXと比較してから判断します。</div>
-        <div>・約定は「シグナル翌朝の観測価格」を仮定しています。実運用ではズレ(スリッページ)が生じます。</div>
-        <div>・株数はS株(単元未満株、SBIは手数料無料)前提の1株単位です。単元株のみだと60万円の資金ではリスク1%規律とほぼ両立しないため。</div>
-        <div>・仮想でも規律は本番と同じ: リスク1%/トレード・損切り8%・地合い悪化時は新規買い停止。</div>
+        <div>・戦略は10年検証で唯一指数に勝った「RS上位10+Trend Template・月次リバランス」(年+18.7% vs TOPIX+13.4%)。月中の損切り・VCPブレイクアウト売買は<strong>検証で有害と判明したため意図的に外しています</strong>(日次ブレイクアウト機械売買は年+4.5%と指数に大敗)。</div>
+        <div>・想定される弱み(検証済み): 最大DDは指数の約2倍・10年中5年は指数に劣後。数ヶ月の劣後で止めると最悪の結果になります。</div>
+        <div>・約定は月初朝の観測価格、株数はS株(単元未満株)前提の1株単位です。実運用ではスリッページが生じます。</div>
+        <div>・ホームのVCP/ブレイクアウトシグナルは裁量トレード(L2/L4)の練習用で、この機械口座は使いません。</div>
       </section>
     </div>
   );
