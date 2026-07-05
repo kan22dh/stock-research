@@ -1,8 +1,45 @@
 import Link from "next/link";
 import { prisma } from "@/lib/db";
-import { LineChart } from "@/components/line-chart";
+import { BacktestChart } from "@/components/backtest-chart";
 
 export const revalidate = 300;
+
+const BENCHMARK_CODE = "13060";
+
+// TOPIX ETF value normalized to the paper account's starting capital at the
+// account's inception date — the honest "何もしなかった場合" comparison line.
+async function benchmarkSeries(
+  dates: string[],
+  startAmount: number,
+): Promise<Map<string, number>> {
+  if (dates.length === 0) return new Map();
+  const bars = await prisma.priceCache.findMany({
+    where: { code: BENCHMARK_CODE, date: { lte: new Date(dates[dates.length - 1]) } },
+    orderBy: { date: "asc" },
+    select: { date: true, close: true, adjClose: true },
+  });
+  if (bars.length === 0) return new Map();
+  const closes = bars.map((b) => ({
+    d: b.date.toISOString().slice(0, 10),
+    v: b.adjClose ?? b.close,
+  }));
+  const valueAt = (d: string): number | null => {
+    let last: number | null = null;
+    for (const c of closes) {
+      if (c.d > d) break;
+      last = c.v;
+    }
+    return last;
+  };
+  const base = valueAt(dates[0]);
+  const out = new Map<string, number>();
+  if (base == null || base === 0) return out;
+  for (const d of dates) {
+    const v = valueAt(d);
+    if (v != null) out.set(d, (v / base) * startAmount);
+  }
+  return out;
+}
 
 // L3 paper-autopilot dashboard: the simulated account the morning cron trades
 // with the exact rules a future live bot (L5, kabu STATION API) would use.
@@ -28,6 +65,10 @@ export default async function PaperPage() {
   );
   const equity = cash + posValue;
   const START = 600_000;
+  const benchMap = await benchmarkSeries(
+    equityRows.map((r) => r.date),
+    START,
+  );
   const totalReturnPct = ((equity - START) / START) * 100;
 
   const closedTrades = trades.filter((t) => t.side === "sell" && t.pnl != null);
@@ -60,12 +101,25 @@ export default async function PaperPage() {
 
       {equityRows.length >= 2 && (
         <section className="rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-neutral-900 p-5">
-          <h2 className="text-sm font-semibold mb-3">資産推移</h2>
-          <LineChart
-            data={equityRows.map((r) => ({ time: r.date, value: r.equity }))}
-            color="#10b981"
-            height={220}
+          <h2 className="text-sm font-semibold mb-3">資産推移 vs TOPIX ETF(同額を指数に入れた場合)</h2>
+          <BacktestChart
+            data={equityRows.map((r) => ({
+              time: r.date,
+              strategy: r.equity,
+              benchmark: benchMap.get(r.date) ?? START,
+            }))}
+            height={240}
           />
+          <div className="flex items-center gap-4 mt-2 text-xs text-neutral-500">
+            <span className="inline-flex items-center gap-1.5">
+              <span className="w-3 h-0.5 bg-emerald-500 inline-block rounded" />
+              自動運用(RS上位10+TT+増収10%)
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span className="w-3 h-0.5 bg-neutral-500 inline-block rounded" />
+              TOPIX ETF(1306)に同額
+            </span>
+          </div>
         </section>
       )}
 

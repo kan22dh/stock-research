@@ -16,8 +16,39 @@ type SearchParams = Promise<{
   tt?: string; // "1" = require Trend Template
   cost?: string; // bps per side
   stop?: string; // % stop-loss from month-start price (0 = off)
+  g?: string; // "1" = 増収10%ゲート (fundamentals; window auto-clamped to 2024-07〜)
   run?: string;
 }>;
+
+const GROWTH_GATE_START = "2024-07-01"; // fundamentals history only covers ~2y
+const DISCLOSURE_LAG_DAYS = 90;
+
+// Point-in-time growth gate: latest fiscal year counts as "known" only 90
+// days after it ends (disclosure lag), same discipline as §9 of the research.
+async function buildGrowthGate(): Promise<(code: string, date: string) => boolean> {
+  const rows = await prisma.financialCache.findMany({
+    select: { code: true, fiscalYearEnd: true, salesYoY: true },
+    orderBy: [{ code: "asc" }, { fiscalYearEnd: "asc" }],
+  });
+  const byCode = new Map<string, { availableFrom: string; salesYoY: number | null }[]>();
+  for (const r of rows) {
+    const d = new Date(r.fiscalYearEnd + "T00:00:00Z");
+    d.setUTCDate(d.getUTCDate() + DISCLOSURE_LAG_DAYS);
+    let list = byCode.get(r.code);
+    if (!list) {
+      list = [];
+      byCode.set(r.code, list);
+    }
+    list.push({ availableFrom: d.toISOString().slice(0, 10), salesYoY: r.salesYoY });
+  }
+  return (code, date) => {
+    const list = byCode.get(code);
+    if (!list) return false;
+    let latest: { salesYoY: number | null } | null = null;
+    for (const r of list) if (r.availableFrom <= date) latest = r;
+    return latest != null && latest.salesYoY != null && latest.salesYoY >= 10;
+  };
+}
 
 export default async function BacktestPage({
   searchParams,
@@ -29,6 +60,7 @@ export default async function BacktestPage({
   const requireTrendTemplate = sp.tt !== "0"; // default ON
   const costPerSideBps = Math.max(0, Math.min(100, Number(sp.cost ?? "20")));
   const stopLossPct = Math.max(0, Math.min(50, Number(sp.stop ?? "0")));
+  const growthGate = sp.g === "1";
   const shouldRun = sp.run === "1";
 
   const [priceCodes, benchRows] = await Promise.all([
@@ -48,6 +80,14 @@ export default async function BacktestPage({
         requireTrendTemplate,
         costPerSideBps,
         stopLossPct,
+        ...(growthGate
+          ? {
+              eligibility: await buildGrowthGate(),
+              // Fundamentals history is ~2y; earlier months would see every
+              // stock as "unknown" and sit 100% in cash, poisoning the run.
+              startDate: GROWTH_GATE_START,
+            }
+          : {}),
       });
     }
     if (!result) ranButNoResult = true;
@@ -141,6 +181,18 @@ export default async function BacktestPage({
                 className="rounded border-black/25 dark:border-white/25"
               />
               Trend Template通過を必須にする
+            </label>
+          </div>
+          <div className="flex items-end pb-1.5">
+            <label className="inline-flex items-center gap-2 text-sm" title="直近既知の会計年度で売上YoY≥10%の銘柄のみ。財務履歴の制約で検証窓は2024-07以降に自動制限されます">
+              <input
+                type="checkbox"
+                name="g"
+                value="1"
+                defaultChecked={growthGate}
+                className="rounded border-black/25 dark:border-white/25"
+              />
+              増収10%ゲート(検証窓は2024-07〜)
             </label>
           </div>
         </div>
