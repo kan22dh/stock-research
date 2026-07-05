@@ -26,6 +26,12 @@ export type BacktestParams = {
   // 0 = no stop. This is the champions' core discipline — without it a single
   // -60% blowup (e.g. 7692 in 2023-04) rides all the way down.
   stopLossPct: number;
+  // Optional point-in-time eligibility gate (e.g. fundamentals known as of the
+  // rebalance date). Return false to exclude the stock that month.
+  eligibility?: (code: string, date: string) => boolean;
+  // Clamp the first rebalance to this date — lets variants with different
+  // data-coverage windows be compared over an identical period.
+  startDate?: string;
 };
 
 export type BacktestPoint = { time: string; strategy: number; benchmark: number };
@@ -133,7 +139,7 @@ export function runBacktest(
   // Need ~13 months of history before the first tradeable month-end so that
   // 12-month RS is computable for at least part of the universe.
   const MIN_HISTORY_BARS = 253;
-  const startIdx = rebalances.findIndex((d) => {
+  let startIdx = rebalances.findIndex((d) => {
     let ready = 0;
     for (const s of byCode.values()) {
       const idx = lastIndexAtOrBefore(s.dates, d);
@@ -142,6 +148,11 @@ export function runBacktest(
     }
     return false;
   });
+  if (startIdx >= 0 && params.startDate) {
+    while (startIdx < rebalances.length && rebalances[startIdx] < params.startDate) {
+      startIdx++;
+    }
+  }
   if (startIdx < 0 || rebalances.length - startIdx < 8) return null;
 
   const cost = params.costPerSideBps / 10000;
@@ -167,6 +178,7 @@ export function runBacktest(
     // Rank point-in-time.
     const candidates: { code: string; rsRaw: number }[] = [];
     for (const [code, s] of byCode) {
+      if (params.eligibility && !params.eligibility(code, t0)) continue;
       const idx = lastIndexAtOrBefore(s.dates, t0);
       if (idx + 1 < MIN_HISTORY_BARS) continue;
       const m = computeMomentumMetrics(

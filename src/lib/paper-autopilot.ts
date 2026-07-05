@@ -1,7 +1,8 @@
-// L3 paper autopilot — runs the ONLY strategy that survived validation:
-// monthly rebalance into the top-10 stocks by RS raw momentum among Trend
-// Template passers (+18.7%/yr vs TOPIX +13.4% over 10y, see
-// RESEARCH_WINNING_SYSTEMS.md §7).
+// L3 paper autopilot — monthly rebalance into the top-10 by RS raw momentum
+// among Trend Template passers (+18.7%/yr vs TOPIX +13.4% over 10y, §7),
+// gated on latest-FY sales growth ≥10% (CAN SLIM-style; §9: +30pt/yr with
+// halved DD over the 24-month window fundamentals history allows, robust
+// across 5-20% thresholds).
 //
 // Deliberately absent (each tested and found harmful mechanically, §7-§8):
 //   - intra-month stop-losses (whipsaw: -8pt/yr)
@@ -18,6 +19,7 @@ import { jstToday } from "./signals";
 
 const START_CASH = 600_000; // mirrors the real active sleeve
 const TOP_N = 10;
+const SALES_GROWTH_MIN = 10; // % — CAN SLIM-style growth gate (§9)
 
 async function getSetting(key: string): Promise<string | null> {
   const row = await prisma.appSetting.findUnique({ where: { key } });
@@ -66,15 +68,30 @@ export async function runPaperAutopilot(): Promise<AutopilotResult> {
   const rebalanced = lastRebalance !== month;
 
   if (rebalanced) {
-    // Target: top-10 by rsRaw among Trend Template passers. Fewer than 10
-    // qualify in bad markets → the rest stays in cash (the strategy's
-    // built-in defensive mode, same as the validated backtest).
-    const candidates = await prisma.momentum.findMany({
+    // Target: top-10 by rsRaw among Trend Template passers WITH the latest
+    // known fiscal year showing sales growth ≥10% (CAN SLIM-style gate;
+    // §9: robust across 5-20% thresholds, +30pt/yr and halved DD over the
+    // 24-month testable window — fundamentals history is too short for a
+    // 10y validation of the gate itself). Fewer than 10 qualify in bad
+    // markets → the rest stays in cash (built-in defensive mode).
+    const ranked = await prisma.momentum.findMany({
       where: { technicalPass: true, rsRaw: { not: null } },
       orderBy: { rsRaw: "desc" },
-      take: TOP_N,
+      take: 150,
       select: { code: true, price: true },
     });
+    const latestFins = await prisma.financialCache.findMany({
+      where: { code: { in: ranked.map((r) => r.code) } },
+      orderBy: [{ code: "asc" }, { fiscalYearEnd: "desc" }],
+      distinct: ["code"],
+      select: { code: true, salesYoY: true },
+    });
+    const growthOK = new Set(
+      latestFins
+        .filter((f) => f.salesYoY != null && f.salesYoY >= SALES_GROWTH_MIN)
+        .map((f) => f.code),
+    );
+    const candidates = ranked.filter((r) => growthOK.has(r.code)).slice(0, TOP_N);
     const target = new Set(candidates.map((c) => c.code));
 
     // Sell whatever fell out of the target list.
