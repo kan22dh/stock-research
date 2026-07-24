@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "./db";
 import { listedInfo, statements } from "./jquants";
 import { toShortCode } from "./stock-codes";
@@ -17,38 +18,35 @@ export async function syncListedInfoIfStale(): Promise<{ count: number; refreshe
 
   const list = await listedInfo();
 
-  await prisma.$transaction(
-    list.map((row) =>
-      prisma.listedStock.upsert({
-        where: { code: row.Code },
-        create: {
-          code: row.Code,
-          ticker: toShortCode(row.Code),
-          name: row.CompanyName,
-          nameEnglish: row.CompanyNameEnglish ?? null,
-          sector17Code: row.Sector17Code ?? null,
-          sector17Name: row.Sector17CodeName ?? null,
-          sector33Code: row.Sector33Code ?? null,
-          sector33Name: row.Sector33CodeName ?? null,
-          scaleCategory: row.ScaleCategory ?? null,
-          marketCode: row.MarketCode ?? null,
-          marketName: row.MarketCodeName ?? null,
-        },
-        update: {
-          ticker: toShortCode(row.Code),
-          name: row.CompanyName,
-          nameEnglish: row.CompanyNameEnglish ?? null,
-          sector17Code: row.Sector17Code ?? null,
-          sector17Name: row.Sector17CodeName ?? null,
-          sector33Code: row.Sector33Code ?? null,
-          sector33Name: row.Sector33CodeName ?? null,
-          scaleCategory: row.ScaleCategory ?? null,
-          marketCode: row.MarketCode ?? null,
-          marketName: row.MarketCodeName ?? null,
-        },
-      }),
-    ),
-  );
+  // Bulk upsert in chunks instead of one Prisma call per stock (~4,500
+  // individual round-trips) — was both slow and, on a free-tier DB with a
+  // metered operation quota, a meaningful chunk of daily usage for a sync
+  // that only needs to run once every 24h.
+  const CHUNK = 200;
+  for (let i = 0; i < list.length; i += CHUNK) {
+    const chunk = list.slice(i, i + CHUNK);
+    const values = chunk.map(
+      (row) => Prisma.sql`(
+        ${row.Code}, ${toShortCode(row.Code)}, ${row.CompanyName}, ${row.CompanyNameEnglish ?? null},
+        ${row.Sector17Code ?? null}, ${row.Sector17CodeName ?? null},
+        ${row.Sector33Code ?? null}, ${row.Sector33CodeName ?? null},
+        ${row.ScaleCategory ?? null}, ${row.MarketCode ?? null}, ${row.MarketCodeName ?? null}, NOW()
+      )`,
+    );
+    await prisma.$executeRaw`
+      INSERT INTO "ListedStock" (
+        code, ticker, name, "nameEnglish", "sector17Code", "sector17Name",
+        "sector33Code", "sector33Name", "scaleCategory", "marketCode", "marketName", "updatedAt"
+      )
+      VALUES ${Prisma.join(values)}
+      ON CONFLICT (code) DO UPDATE SET
+        ticker = EXCLUDED.ticker, name = EXCLUDED.name, "nameEnglish" = EXCLUDED."nameEnglish",
+        "sector17Code" = EXCLUDED."sector17Code", "sector17Name" = EXCLUDED."sector17Name",
+        "sector33Code" = EXCLUDED."sector33Code", "sector33Name" = EXCLUDED."sector33Name",
+        "scaleCategory" = EXCLUDED."scaleCategory", "marketCode" = EXCLUDED."marketCode",
+        "marketName" = EXCLUDED."marketName", "updatedAt" = EXCLUDED."updatedAt"
+    `;
+  }
 
   await prisma.syncLog.upsert({
     where: { key: "listed_info" },

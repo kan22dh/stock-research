@@ -4,7 +4,8 @@ import { LineChart } from "@/components/line-chart";
 import { LiveQuoteCard } from "@/components/live-quote-card";
 
 // Live page - frequent revalidation since Stooq quotes are real-time-ish
-export const revalidate = 60;
+// force-dynamic, not ISR — see system-health-badge.tsx for why (2026-07 incident)
+export const dynamic = "force-dynamic";
 
 const COLOR_BY_ID: Record<string, string> = {
   DFF: "#dc2626",

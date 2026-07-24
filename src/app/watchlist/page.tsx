@@ -3,7 +3,8 @@ import { prisma } from "@/lib/db";
 import { WatchToggle } from "@/components/watch-toggle";
 import { fetchYahoo } from "@/lib/yahoo-finance";
 
-export const revalidate = 60;
+// force-dynamic, not ISR — see system-health-badge.tsx for why (2026-07 incident)
+export const dynamic = "force-dynamic";
 
 function pct(latest: number | null, past: number | null): number | null {
   if (latest == null || past == null || past === 0) return null;

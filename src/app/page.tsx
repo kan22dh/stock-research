@@ -10,6 +10,15 @@ import { WatchlistSummary } from "@/components/watchlist-summary";
 import { GoalTracker } from "@/components/goal-tracker";
 import { StopLossAlerts } from "@/components/stop-loss-alerts";
 import { SignalsFeed } from "@/components/signals-feed";
+import { SystemHealthBadge } from "@/components/system-health-badge";
+
+// 2026-07: ISR (`revalidate = N`) silently served a 12-day-stale page for two
+// weeks when the DB hit its free-tier quota — revalidation kept failing but
+// Next.js fell back to the last-good cache instead of erroring. Force-dynamic
+// trades a little latency for "DB down = visibly broken page", not "DB down
+// = looks fine forever." See system-health-badge.tsx for the softer case
+// (DB reachable, cron just stopped running).
+export const dynamic = "force-dynamic";
 
 const EXAMPLE_STOCKS = [
   { code: "72030", name: "トヨタ自動車", note: "大型・自動車" },
@@ -44,6 +53,8 @@ export default async function Home() {
           コードまたは銘柄名で個別株を検索し、ローソクチャート・財務指標・AI分析を1画面で確認できます。
         </p>
       </section>
+
+      <SystemHealthBadge />
 
       <StockSearch />
 

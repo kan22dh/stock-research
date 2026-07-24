@@ -9,7 +9,8 @@ import {
 import { getGoalConfig, getCashBalance, requiredCAGR } from "@/lib/goal";
 import Link from "next/link";
 
-export const revalidate = 60;
+// force-dynamic, not ISR — see system-health-badge.tsx for why (2026-07 incident)
+export const dynamic = "force-dynamic";
 
 export default async function PositionsPage() {
   const [openPositions, closedPositions, cash, goal] = await Promise.all([

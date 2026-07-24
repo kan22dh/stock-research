@@ -2,7 +2,10 @@ import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { BacktestChart } from "@/components/backtest-chart";
 
-export const revalidate = 300;
+// force-dynamic, not ISR: a stale-cached page here would silently show a
+// frozen equity curve as if the account were still trading. See
+// system-health-badge.tsx for the 2026-07 incident this addresses.
+export const dynamic = "force-dynamic";
 
 const BENCHMARK_CODE = "13060";
 

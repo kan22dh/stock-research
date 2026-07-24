@@ -8,7 +8,8 @@ import { isAiEnabled } from "@/lib/ai";
 import { fetchYahoo } from "@/lib/yahoo-finance";
 import { formatYen, formatPercent, formatNumber } from "@/lib/financial-metrics";
 
-export const revalidate = 60;
+// force-dynamic, not ISR — see system-health-badge.tsx for why (2026-07 incident)
+export const dynamic = "force-dynamic";
 
 type SearchParams = Promise<{ codes?: string }>;
 
