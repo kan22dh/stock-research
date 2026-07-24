@@ -34,12 +34,14 @@ export async function SystemHealthBadge() {
   return (
     <div className="rounded-lg border-2 border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/40 px-4 py-3 text-sm text-red-800 dark:text-red-300">
       <div className="font-semibold">
-        ⚠ 毎朝の自動更新が{daysAgo ?? "long"}日間止まっている可能性があります
+        {momentum
+          ? `⚠ 毎朝の自動更新が${daysAgo}日間止まっている可能性があります`
+          : "⚠ モメンタムデータがまだありません(初回同期が未完了)"}
       </div>
       <div className="mt-1 text-xs">
         {momentum
           ? `最終モメンタム更新: ${lastUpdateStr}(JST)`
-          : "モメンタムデータが一件もありません"}
+          : "データ復旧の初回同期が進行中の可能性があります。数時間後に再確認してください。"}
         。Vercelダッシュボードの Cron Jobs / Deployments でエラーを確認するか、
         <a
           href="/api/daily-refresh"
