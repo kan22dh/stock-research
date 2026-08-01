@@ -244,6 +244,26 @@ model PaperEquity {
   cash   Float
 }
 
+// Auto-generated monthly reflection — computed by the system itself right
+// before each new rebalance (not by a human running a skill), so the "did
+// this work?" record can't be silently skipped. Facts only: this does NOT
+// feed back into changing the strategy automatically (see paper-review.ts
+// header) — rule changes still require the same backtest-validation
+// process as everything else in RESEARCH_WINNING_SYSTEMS.md.
+model PaperReview {
+  id            Int      @id @default(autoincrement())
+  month         String   @unique // YYYY-MM being reviewed (the month that just closed)
+  returnPct     Float
+  benchReturnPct Float
+  tradesClosed  Int
+  wins          Int
+  avgWinYen     Float?
+  avgLossYen    Float?
+  netPnlYen     Float
+  note          String
+  createdAt     DateTime @default(now())
+}
+
 // Daily signal feed, produced by the morning cron (/api/daily-refresh):
 // "pivot_breakout" — yesterday's VCP stock closed above its pivot
 // "vcp_new"        — stock newly entered VCP setup (watch candidate)

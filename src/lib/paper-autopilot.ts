@@ -16,6 +16,7 @@
 
 import { prisma } from "./db";
 import { jstToday } from "./signals";
+import { computeMonthlyReview } from "./paper-review";
 
 const START_CASH = 600_000; // mirrors the real active sleeve
 const TOP_N = 10;
@@ -66,6 +67,13 @@ export async function runPaperAutopilot(): Promise<AutopilotResult> {
 
   const lastRebalance = await getSetting("paperLastRebalanceMonth");
   const rebalanced = lastRebalance !== month;
+
+  // Reflect on the month that just ended BEFORE trading the new one — a
+  // fact-only record (return vs TOPIX, trade stats), not a rule-changer.
+  // See paper-review.ts for why this doesn't feed back automatically.
+  if (rebalanced && lastRebalance != null) {
+    await computeMonthlyReview(month).catch(() => null);
+  }
 
   if (rebalanced) {
     // Target: top-10 by rsRaw among Trend Template passers WITH the latest

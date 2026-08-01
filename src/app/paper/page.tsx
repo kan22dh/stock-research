@@ -47,7 +47,7 @@ async function benchmarkSeries(
 // L3 paper-autopilot dashboard: the simulated account the morning cron trades
 // with the exact rules a future live bot (L5, kabu STATION API) would use.
 export default async function PaperPage() {
-  const [positions, trades, equityRows, cashRow] = await Promise.all([
+  const [positions, trades, equityRows, cashRow, reviews] = await Promise.all([
     prisma.paperPosition.findMany({
       include: { stock: { include: { momentum: true } } },
       orderBy: { entryDate: "desc" },
@@ -59,6 +59,7 @@ export default async function PaperPage() {
     }),
     prisma.paperEquity.findMany({ orderBy: { date: "asc" } }),
     prisma.appSetting.findUnique({ where: { key: "paperCash" } }),
+    prisma.paperReview.findMany({ orderBy: { month: "desc" }, take: 12 }),
   ]);
 
   const cash = cashRow ? Number(cashRow.value) : 600_000;
@@ -122,6 +123,55 @@ export default async function PaperPage() {
               <span className="w-3 h-0.5 bg-neutral-500 inline-block rounded" />
               TOPIX ETF(1306)に同額
             </span>
+          </div>
+        </section>
+      )}
+
+      {reviews.length > 0 && (
+        <section className="rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-neutral-900 p-5 space-y-3">
+          <div className="flex items-baseline justify-between flex-wrap gap-2">
+            <h2 className="text-sm font-semibold">📋 月次振り返り(自動生成)</h2>
+            <span className="text-xs text-neutral-500">
+              毎月初のリバランス直前に前月分をシステムが自動計算(手動レビュー不要)
+            </span>
+          </div>
+          <div className="space-y-2">
+            {reviews.map((r) => {
+              const isFlagged = r.note.includes("🚩");
+              return (
+                <div
+                  key={r.month}
+                  className={`rounded-lg px-4 py-3 text-sm ${
+                    isFlagged
+                      ? "bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900"
+                      : "bg-neutral-50 dark:bg-neutral-800/40"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <span className="font-medium">{r.month}</span>
+                    <div className="flex items-center gap-3 tabular-nums text-xs">
+                      <span
+                        className={
+                          r.returnPct >= 0
+                            ? "text-emerald-600 dark:text-emerald-400 font-semibold"
+                            : "text-red-600 dark:text-red-400 font-semibold"
+                        }
+                      >
+                        {r.returnPct >= 0 ? "+" : ""}
+                        {r.returnPct.toFixed(1)}%
+                      </span>
+                      <span className="text-neutral-400">
+                        (TOPIX {r.benchReturnPct >= 0 ? "+" : ""}
+                        {r.benchReturnPct.toFixed(1)}%)
+                      </span>
+                    </div>
+                  </div>
+                  <p className="mt-1 text-neutral-600 dark:text-neutral-400 text-xs">
+                    {r.note}
+                  </p>
+                </div>
+              );
+            })}
           </div>
         </section>
       )}
@@ -229,6 +279,7 @@ export default async function PaperPage() {
         <div>・想定される弱み(検証済み): 最大DDは指数の約2倍・10年中5年は指数に劣後。数ヶ月の劣後で止めると最悪の結果になります。</div>
         <div>・約定は月初朝の観測価格、株数はS株(単元未満株)前提の1株単位です。実際のSBI証券のS株は1日3回約定(前場始値/後場始値/後場引け・成行のみ)のため、朝の指示書から発注すると当日後場始値での約定が基本線になり、シミュレーションとのズレが生じます。</div>
         <div>・ホームのVCP/ブレイクアウトシグナルは裁量トレード(L2/L4)の練習用で、この機械口座は使いません。</div>
+        <div>・月次振り返りは事実の自動記録のみです。数ヶ月の実績でルール(RS上位10・増収10%ゲート等)を自動で変えることはしません。それは10年バックテストへの過剰適合になるためです。3ヶ月連続劣後の警告は「/backtestで前提を再検証する」ための合図であり、自動での戦略変更のトリガーではありません。</div>
       </section>
     </div>
   );
