@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { BacktestChart } from "@/components/backtest-chart";
+import { WithdrawalAlert } from "@/components/withdrawal-alert";
 
 // force-dynamic, not ISR: a stale-cached page here would silently show a
 // frozen equity curve as if the account were still trading. See
@@ -88,6 +89,8 @@ export default async function PaperPage() {
           実弾投入(kabuステーションAPI連携)の前提となる成績記録です。
         </p>
       </header>
+
+      <WithdrawalAlert />
 
       <section className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <Stat label="評価総額" value={`${Math.round(equity).toLocaleString()}円`} />

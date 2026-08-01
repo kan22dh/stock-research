@@ -11,6 +11,7 @@ import { GoalTracker } from "@/components/goal-tracker";
 import { StopLossAlerts } from "@/components/stop-loss-alerts";
 import { SignalsFeed } from "@/components/signals-feed";
 import { SystemHealthBadge } from "@/components/system-health-badge";
+import { WithdrawalAlert } from "@/components/withdrawal-alert";
 
 // 2026-07: ISR (`revalidate = N`) silently served a 12-day-stale page for two
 // weeks when the DB hit its free-tier quota — revalidation kept failing but
@@ -53,6 +54,8 @@ export default async function Home() {
           コードまたは銘柄名で個別株を検索し、ローソクチャート・財務指標・AI分析を1画面で確認できます。
         </p>
       </section>
+
+      <WithdrawalAlert />
 
       <SystemHealthBadge />
 
