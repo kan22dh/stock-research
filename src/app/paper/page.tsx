@@ -76,6 +76,17 @@ export default async function PaperPage() {
   );
   const totalReturnPct = ((equity - START) / START) * 100;
 
+  // Sector mix of the current book. Selection ranks by price strength alone,
+  // so a single hot theme can quietly fill most slots (see the 2026-08 review:
+  // 4 of 10 were regional banks). Displayed as risk information only — the
+  // rebalance rules are unchanged pending the L3→L4 review.
+  const sectorCounts = new Map<string, number>();
+  for (const p of positions) {
+    const s = p.stock.sector33Name ?? "その他";
+    sectorCounts.set(s, (sectorCounts.get(s) ?? 0) + 1);
+  }
+  const maxSectorCount = Math.max(0, ...sectorCounts.values());
+
   const closedTrades = trades.filter((t) => t.side === "sell" && t.pnl != null);
   const wins = closedTrades.filter((t) => (t.pnl ?? 0) > 0);
   const winRate = closedTrades.length > 0 ? (wins.length / closedTrades.length) * 100 : null;
@@ -180,7 +191,7 @@ export default async function PaperPage() {
       )}
 
       <section>
-        <h2 className="text-sm font-semibold mb-3">保有中 ({positions.length}/8)</h2>
+        <h2 className="text-sm font-semibold mb-3">保有中 ({positions.length}/10)</h2>
         {positions.length === 0 ? (
           <div className="rounded-2xl border border-dashed p-8 text-center text-sm text-neutral-500">
             現在ポジションなし(ブレイクアウト待ち、または地合いフィルタで待機中)
@@ -234,6 +245,46 @@ export default async function PaperPage() {
           </div>
         )}
       </section>
+
+      {positions.length > 0 && (
+        <section className="rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-neutral-900 p-5 space-y-2">
+          <h2 className="text-sm font-semibold">業種の偏り(集中リスク)</h2>
+          <p className="text-xs text-neutral-500">
+            銘柄選定は株価の強さ順(RS)で行うため業種を見ていません。同じテーマが上位を占めると、10銘柄あっても実質1つの賭けになります。ここはその偏りを可視化するだけで、売買には影響しません。
+          </p>
+          <ul className="space-y-1.5 pt-1">
+            {[...sectorCounts.entries()]
+              .sort((a, b) => b[1] - a[1])
+              .map(([sector, count]) => {
+                const share = (count / positions.length) * 100;
+                const heavy = count >= 4;
+                return (
+                  <li key={sector} className="flex items-center gap-3 text-sm">
+                    <span className="w-28 shrink-0 truncate text-neutral-600 dark:text-neutral-400">
+                      {sector}
+                    </span>
+                    <span className="flex-1 h-2 rounded-full bg-neutral-100 dark:bg-neutral-800 overflow-hidden">
+                      <span
+                        className={`block h-full rounded-full ${
+                          heavy ? "bg-amber-500" : "bg-indigo-400 dark:bg-indigo-500"
+                        }`}
+                        style={{ width: `${share}%` }}
+                      />
+                    </span>
+                    <span className="w-16 shrink-0 text-right tabular-nums text-neutral-500 text-xs">
+                      {count}銘柄
+                    </span>
+                  </li>
+                );
+              })}
+          </ul>
+          {maxSectorCount >= 4 && (
+            <p className="text-xs text-amber-700 dark:text-amber-500 pt-1">
+              ⚠️ 1業種に{maxSectorCount}銘柄が集中しています。その業種が崩れると口座全体が同時に下げます。
+            </p>
+          )}
+        </section>
+      )}
 
       <section>
         <h2 className="text-sm font-semibold mb-3">売買履歴(直近50件)</h2>

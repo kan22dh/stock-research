@@ -32,6 +32,16 @@ export type BacktestParams = {
   // Clamp the first rebalance to this date — lets variants with different
   // data-coverage windows be compared over an identical period.
   startDate?: string;
+  // Stop rebalancing after this date — pairs with startDate to carve out
+  // sub-periods for robustness checks (does an edge hold in both halves, or
+  // does it come from one lucky stretch?).
+  endDate?: string;
+  // Optional cap on how many slots one sector may occupy. Top-RS ranking is
+  // sector-blind, so a hot theme (e.g. regional banks on a rate-hike run) can
+  // fill most of the book and turn N holdings into one bet. Undefined = no cap
+  // (the historical behaviour); requires sectorOf to take effect.
+  maxPerSector?: number;
+  sectorOf?: (code: string) => string | null;
 };
 
 export type BacktestPoint = { time: string; strategy: number; benchmark: number };
@@ -174,6 +184,7 @@ export function runBacktest(
   for (let i = startIdx; i < rebalances.length - 1; i++) {
     const t0 = rebalances[i];
     const t1 = rebalances[i + 1];
+    if (params.endDate && t1 > params.endDate) break;
 
     // Rank point-in-time.
     const candidates: { code: string; rsRaw: number }[] = [];
@@ -189,7 +200,24 @@ export function runBacktest(
       candidates.push({ code, rsRaw: m.rsRaw });
     }
     candidates.sort((a, b) => b.rsRaw - a.rsRaw);
-    const selection = new Set(candidates.slice(0, params.topN).map((c) => c.code));
+    // Walk the ranking in order, skipping names whose sector is already full.
+    // Slots that can't be filled stay empty (cash), same as a thin universe.
+    const selection = new Set<string>();
+    if (params.maxPerSector != null && params.sectorOf) {
+      const perSector = new Map<string, number>();
+      for (const c of candidates) {
+        if (selection.size >= params.topN) break;
+        const sec = params.sectorOf(c.code);
+        if (sec) {
+          const used = perSector.get(sec) ?? 0;
+          if (used >= params.maxPerSector) continue;
+          perSector.set(sec, used + 1);
+        }
+        selection.add(c.code);
+      }
+    } else {
+      for (const c of candidates.slice(0, params.topN)) selection.add(c.code);
+    }
 
     // Turnover cost: pay both sides on changed slots (and full buy on month 1).
     const entries = [...selection].filter((c) => !held.has(c)).length;
