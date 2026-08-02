@@ -7,6 +7,7 @@ const NAV_ITEMS = [
   { href: "/", label: "銘柄検索" },
   { href: "/positions", label: "ポジション" },
   { href: "/paper", label: "自動運用" },
+  { href: "/signals", label: "シグナル成績" },
   { href: "/watchlist", label: "ウォッチリスト" },
   { href: "/screener", label: "スクリーナー" },
   { href: "/backtest", label: "検証" },

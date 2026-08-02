@@ -10,6 +10,7 @@
 // Signals are stored idempotently per (date, type, code) so re-runs are safe.
 
 import { prisma } from "./db";
+import { computeRSRatings } from "./momentum";
 
 export type MomentumSnapshot = Map<
   string,
@@ -33,11 +34,15 @@ export async function computeDailySignals(
   date = jstToday(),
 ): Promise<{ breakouts: number; newSetups: number; stopRaises: number }> {
   const fresh = await prisma.momentum.findMany({
-    select: { code: true, vcpPass: true, pivot: true, price: true },
+    select: { code: true, vcpPass: true, pivot: true, price: true, rsRaw: true, technicalPass: true },
   });
+  // RS Rating is universe-relative, so percentile-rank the whole snapshot once.
+  const rsRatings = computeRSRatings(fresh);
 
   type Row = { date: string; type: string; code: string; payload: string };
   const rows: Row[] = [];
+  type BreakoutMeta = { rs: number | null; tt: boolean };
+  const breakoutMeta = new Map<string, BreakoutMeta>();
 
   for (const m of fresh) {
     const prev = snapshot.get(m.code);
@@ -48,6 +53,10 @@ export async function computeDailySignals(
       m.price != null &&
       m.price > prev.pivot
     ) {
+      breakoutMeta.set(m.code, {
+        rs: rsRatings.get(m.code) ?? null,
+        tt: m.technicalPass,
+      });
       rows.push({
         date,
         type: "pivot_breakout",
@@ -93,6 +102,40 @@ export async function computeDailySignals(
           currentStop: p.stopLossPrice,
           suggestedStop: suggested,
         }),
+      });
+    }
+  }
+
+  // Freeze the three verified buy-gate criteria (RS>=70 / Trend Template /
+  // sales YoY >=10%) into each breakout's payload AS OF signal time, so the
+  // /signals track record can split "rule-pass" vs "rule-fail" outcomes
+  // without hindsight bias. salesYoY comes from the latest cached FY — the
+  // J-Quants free plan lags ~12 weeks, hence `fy` is stored so the UI can
+  // tell the reader which fiscal year the number belongs to.
+  const breakoutCodes = [...breakoutMeta.keys()];
+  if (breakoutCodes.length > 0) {
+    const fins = await prisma.financialCache.findMany({
+      where: { code: { in: breakoutCodes } },
+      orderBy: { fiscalYearEnd: "desc" },
+      select: { code: true, fiscalYearEnd: true, salesYoY: true },
+    });
+    const latestFin = new Map<string, { fiscalYearEnd: string; salesYoY: number | null }>();
+    for (const f of fins) if (!latestFin.has(f.code)) latestFin.set(f.code, f);
+    for (const r of rows) {
+      if (r.type !== "pivot_breakout") continue;
+      const meta = breakoutMeta.get(r.code);
+      const fin = latestFin.get(r.code);
+      const rs = meta?.rs ?? null;
+      const tt = meta?.tt ?? false;
+      const salesYoY = fin?.salesYoY ?? null;
+      const gate = rs != null && rs >= 70 && tt && salesYoY != null && salesYoY >= 10;
+      r.payload = JSON.stringify({
+        ...JSON.parse(r.payload),
+        rs,
+        tt,
+        salesYoY,
+        fy: fin?.fiscalYearEnd ?? null,
+        gate,
       });
     }
   }
