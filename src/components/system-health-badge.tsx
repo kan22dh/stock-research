@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { connection } from "next/server";
 
 // Surfaces when the daily cron has silently stopped updating data — the
 // exact failure mode from the 2026-07 incident (DB hit its free-tier quota,
@@ -12,12 +13,19 @@ import { prisma } from "@/lib/db";
 const STALE_THRESHOLD_HOURS = 30; // cron runs ~daily; missing ~1.5 days = alarm
 
 export async function SystemHealthBadge() {
+  // The badge depends on the request time, so it must never be frozen during
+  // prerendering. This is the Next.js 16 replacement for unstable_noStore().
+  await connection();
+
   const momentum = await prisma.momentum.findFirst({
     orderBy: { asOf: "desc" },
     select: { asOf: true },
   });
 
   const ageHours = momentum
+    // React's purity rule cannot infer that connection() makes this a
+    // request-time Server Component; reading the clock here is intentional.
+    // eslint-disable-next-line react-hooks/purity
     ? (Date.now() - momentum.asOf.getTime()) / 3_600_000
     : Infinity;
   if (ageHours < STALE_THRESHOLD_HOURS) return null;
