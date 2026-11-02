@@ -130,3 +130,25 @@ neighbour, 3 leverage) = 28.
 - Either way this is the last research round of this rebuild.
 - Known caveats: 12 months is thin evidence; survivorship bias likely
   flatters a yield tilt (delisted yield traps are absent from the data).
+
+# Holdout result (run once, 2026-11-02, scripts/research/holdout.ts)
+
+Window 2025-10-31 → 2026-10-30 (12 months):
+- TOPIX (1306): +21.5%, max DD −7.4%
+- B0:           +26.2%, max DD −32.1% (incl. a −32.1% month, 2026-07)
+- 18a:          +20.3%, max DD −15.6%
+
+VERDICT: FAIL (18a < TOPIX). Per the declaration there is no v2; v1 stays
+as the only paper account. This was the last research round of the rebuild.
+
+# Overall conclusion of the 2026-11 rebuild research
+
+28 trials + 1 holdout. No tested rule beat the momentum baseline robustly,
+and the momentum baseline itself has not beaten TOPIX since 2017 on repaired
+data (+7.3% vs +10.7%/yr to 2025-10). Its 2009–17 strength (+30%/yr) sits in
+the window where survivorship bias and the Abenomics rally are largest.
+The only consistent effect found is risk reduction, not return: blending a
+dividend-yield rank into the RS rank roughly halves drawdown at a similar
+return, and broader books (top 15–20) also cut drawdown.
+10× in 10 years needs 25.9%/yr. Nothing here supports expecting that from
+stock selection rules; TOPIX at ~12%/yr compounds to ~3× in 10 years.
