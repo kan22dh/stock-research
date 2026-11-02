@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "./db";
-import { fetchYahoo } from "./yahoo-finance";
+import { fetchYahoo, type YahooBar } from "./yahoo-finance";
+import { bulkUpsertPriceBars, type PriceRow } from "./price-upsert";
 import {
   computeMomentumMetrics,
   computeVcp,
@@ -32,7 +33,14 @@ type MomentumFields = {
   pivot: number | null;
 };
 
-async function computeMomentumFields(code: string): Promise<MomentumFields | null> {
+// Bars from the tail of each fetch are written back to PriceCache so the
+// backtest/benchmark history stays current as a side effect of the daily
+// momentum pass (see price-upsert.ts). 5 bars = self-heals short cron gaps.
+const RECENT_BARS = 5;
+
+async function computeMomentumFields(
+  code: string,
+): Promise<{ fields: MomentumFields; recentBars: YahooBar[] } | null> {
   const quote = await fetchYahoo(code, "2y", 3600).catch(() => null);
   if (!quote || quote.bars.length < 60) return null;
 
@@ -50,7 +58,7 @@ async function computeMomentumFields(code: string): Promise<MomentumFields | nul
   // Display fields should be actual price levels, not dividend-adjusted ones.
   const lastRaw = clean[clean.length - 1].close;
 
-  return {
+  const fields: MomentumFields = {
     price: lastRaw,
     return1m: m.return1m,
     return3m: m.return3m,
@@ -70,6 +78,7 @@ async function computeMomentumFields(code: string): Promise<MomentumFields | nul
     vcpVolumeDryUp: vcp?.volumeDryUp ?? false,
     pivot: vcp?.pivot ?? null,
   };
+  return { fields, recentBars: clean.slice(-RECENT_BARS) };
 }
 
 export async function syncMomentumIfStale(
@@ -79,8 +88,9 @@ export async function syncMomentumIfStale(
   if (existing && Date.now() - existing.asOf.getTime() < MOMENTUM_TTL_MS) {
     return { refreshed: false };
   }
-  const fields = await computeMomentumFields(code);
-  if (!fields) return { refreshed: false };
+  const computed = await computeMomentumFields(code);
+  if (!computed) return { refreshed: false };
+  const { fields } = computed;
   await prisma.momentum.upsert({
     where: { code },
     create: { code, ...fields },
@@ -155,7 +165,7 @@ async function bulkUpsertMomentum(
 export async function syncMomentumBatchConcurrent(
   codes: string[],
   concurrency = 8,
-): Promise<{ requested: number; synced: number; failed: number }> {
+): Promise<{ requested: number; synced: number; failed: number; priceBars: number }> {
   const existing = await prisma.momentum.findMany({
     where: { code: { in: codes } },
     select: { code: true, asOf: true },
@@ -167,14 +177,18 @@ export async function syncMomentumBatchConcurrent(
   });
 
   const computed: { code: string; fields: MomentumFields }[] = [];
+  const recent: PriceRow[] = [];
   let failed = 0;
   let cursor = 0;
   async function worker() {
     while (cursor < staleCodes.length) {
       const code = staleCodes[cursor++];
       try {
-        const fields = await computeMomentumFields(code);
-        if (fields) computed.push({ code, fields });
+        const r = await computeMomentumFields(code);
+        if (r) {
+          computed.push({ code, fields: r.fields });
+          for (const b of r.recentBars) recent.push({ code, ...b });
+        }
       } catch {
         failed++;
       }
@@ -185,6 +199,7 @@ export async function syncMomentumBatchConcurrent(
   );
 
   if (computed.length > 0) await bulkUpsertMomentum(computed);
+  if (recent.length > 0) await bulkUpsertPriceBars(recent);
 
-  return { requested: codes.length, synced: computed.length, failed };
+  return { requested: codes.length, synced: computed.length, failed, priceBars: recent.length };
 }

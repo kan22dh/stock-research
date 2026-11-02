@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { syncFinancialsIfStale } from "@/lib/sync";
+import { runStage, startCronRun, finishCronRun, type StageResult } from "@/lib/cron-run";
 
 // Second daily cron: J-Quants is too rate-limited to refresh 1,200 stocks'
 // financials in one serverless run, so cycle the ~25 stalest per day
@@ -13,6 +14,14 @@ const BATCH = 25;
 const DELAY_MS = 6000;
 
 async function run() {
+  const runId = await startCronRun("rolling-financials");
+  const stages: Record<string, StageResult> = {};
+  const result = await runStage(stages, "financials", runBatch);
+  await finishCronRun(runId, stages);
+  return NextResponse.json({ stages, ...(result ?? {}) }, { status: result ? 200 : 500 });
+}
+
+async function runBatch() {
   const stale = await prisma.$queryRaw<{ code: string }[]>`
     SELECT REPLACE(key, 'financials:', '') AS code
     FROM "SyncLog"
@@ -37,7 +46,7 @@ async function run() {
     }
     await new Promise((r) => setTimeout(r, DELAY_MS));
   }
-  return NextResponse.json({ requested: stale.length, synced, failed });
+  return { requested: stale.length, synced, failed };
 }
 
 export async function GET() {

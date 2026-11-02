@@ -46,3 +46,6 @@ next-env.d.ts
 
 .vercel
 .env*.local
+
+# local research dataset (built by scripts/build-dataset.ts)
+/.cache/

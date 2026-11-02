@@ -281,3 +281,19 @@ model Signal {
   @@unique([date, type, code])
   @@index([date])
 }
+
+// One row per cron invocation. Added after the second multi-week silent outage
+// (2026-08-12 → 10-02): the first one was diagnosed from a dashboard
+// screenshot, the second left no trace at all. Each stage's outcome is written
+// here so the health endpoint (and the GitHub Actions watchdog that polls it)
+// can tell "cron never ran" apart from "cron ran but a stage failed".
+model CronRun {
+  id         Int       @id @default(autoincrement())
+  job        String    // "daily-refresh" | "rolling-financials"
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+  ok         Boolean   @default(false)
+  detail     String?   // JSON: per-stage result or error message
+
+  @@index([job, startedAt])
+}
