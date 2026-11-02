@@ -18,9 +18,64 @@ export type Series = {
   a: number[];
   c: number[];
   v: number[];
+  divs?: [string, number][]; // ex-date, amount (split basis = close)
 };
 
 type Prepared = Series & { pre: Float64Array }; // prefix sums of adjClose
+
+// Yahoo's long history (pre-2016) has unadjusted splits in ~5% of series —
+// e.g. 1306's 10:1 split on 2015-01-05 shows as a −90% day, and many 1:100
+// unit-share splits of 2004–06/2011–13. TSE daily price limits make a one-day
+// move beyond ×0.6 / ×1.7 effectively impossible, so such a jump is a data
+// break. The benchmark's known split is rescaled; for any other series the
+// history BEFORE its last break is dropped (conservative: loses data, never
+// invents it). Dividends before the cut are dropped with it.
+const BREAK_LO = 0.6, BREAK_HI = 1.7;
+export function repairBreaks(s: Series): Series {
+  if (s.code === BENCH) {
+    const k = s.t.indexOf("2015-01-05");
+    if (k > 0 && s.a[k] / s.a[k - 1] < 0.2) {
+      const a = s.a.map((x, i) => (i < k ? x / 10 : x));
+      const c = s.c.map((x, i) => (i < k ? x / 10 : x));
+      return { ...s, a, c };
+    }
+    return s;
+  }
+  let last = -1;
+  for (let i = 1; i < s.a.length; i++) {
+    const r = s.a[i] / s.a[i - 1];
+    if (r < BREAK_LO || r > BREAK_HI) last = i;
+  }
+  if (last < 0) return s;
+  const from = s.t[last];
+  return {
+    ...s,
+    t: s.t.slice(last), a: s.a.slice(last), c: s.c.slice(last), v: s.v.slice(last),
+    divs: s.divs?.filter(([d]) => d >= from),
+  };
+}
+
+// Round-2 dataset: daily history from 2000 + dividends, one file per series.
+export function loadLongDataset(): { stocks: Prepared[]; bench: Prepared; builtAt: string; extra: Map<string, Prepared> } {
+  const dir = path.join(__dirname, "..", "..", ".cache", "long");
+  const prep = (s: Series): Prepared => {
+    const pre = new Float64Array(s.a.length + 1);
+    for (let i = 0; i < s.a.length; i++) pre[i + 1] = pre[i] + s.a[i];
+    return { ...s, pre };
+  };
+  const all = fs
+    .readdirSync(dir)
+    .map((f) => prep(repairBreaks(JSON.parse(fs.readFileSync(path.join(dir, f), "utf8")) as Series)))
+    .filter((s) => s.t.length >= 60);
+  const bench = all.find((s) => s.code === BENCH)!;
+  const extraCodes = new Set(["15700", "N225"]);
+  return {
+    stocks: all.filter((s) => s.code !== BENCH && !extraCodes.has(s.code)),
+    bench,
+    builtAt: fs.statSync(dir).mtime.toISOString(),
+    extra: new Map(all.filter((s) => extraCodes.has(s.code)).map((s) => [s.code, s])),
+  };
+}
 
 export function loadDataset(): { stocks: Prepared[]; bench: Prepared; builtAt: string } {
   const p = path.join(__dirname, "..", "..", ".cache", "dataset.json");
@@ -30,7 +85,7 @@ export function loadDataset(): { stocks: Prepared[]; bench: Prepared; builtAt: s
     for (let i = 0; i < s.a.length; i++) pre[i + 1] = pre[i] + s.a[i];
     return { ...s, pre };
   };
-  const all = raw.series.map(prep);
+  const all = raw.series.map((s) => prep(repairBreaks(s))).filter((s) => s.t.length >= 60);
   const bench = all.find((s) => s.code === BENCH);
   if (!bench) throw new Error("benchmark missing from dataset");
   return { stocks: all.filter((s) => s.code !== BENCH), bench, builtAt: raw.builtAt };
@@ -61,6 +116,7 @@ export type Features = {
   high52prox: number;
   ret36ex12: number | null;
   ret60ex12: number | null;
+  dy: number | null; // trailing-12m dividend yield; null when no dividend data at all
 };
 
 // Point-in-time features at bar index i (requires i >= 252).
@@ -107,7 +163,17 @@ export function features(s: Prepared, i: number): Features | null {
   const lt = (L: number): number | null =>
     i - L >= 0 && a[i - L] > 0 ? a[i - 252] / a[i - L] : null;
 
+  let dy: number | null = null;
+  if (s.divs) {
+    const asOf = s.t[i];
+    const from = shiftDays(asOf, -365);
+    let sum = 0;
+    for (const [d, amt] of s.divs) if (d > from && d <= asOf) sum += amt;
+    dy = s.c[i] > 0 ? sum / s.c[i] : null;
+  }
+
   return {
+    dy,
     code: s.code,
     sector: s.sector,
     price: p,
@@ -137,6 +203,8 @@ export type Params = {
   // Hold stocks only when the benchmark's month-end close is above its
   // N-month SMA (Faber). Otherwise everything goes to cash for that month.
   indexTrendMonths?: number;
+  // Debug hook: called once per month with each holding's return.
+  onMonth?: (d0: string, holdings: { code: string; ret: number }[]) => void;
 };
 
 export type MonthRow = { d0: string; d1: string; strat: number; bench: number; held: number; inMarket: boolean };
@@ -225,12 +293,16 @@ export function run(
     const turnover = (entries + exits) / P.topN;
 
     let sum = 0;
+    const dbg: { code: string; ret: number }[] = [];
     for (const code of selection) {
       const s = ds.stocks.find((x) => x.code === code)!;
       const i0 = idx0.get(code)!;
       const i1 = idxAtOrBefore(s.t, d1);
-      sum += i1 > i0 ? s.a[i1] / s.a[i0] - 1 : 0;
+      const r = i1 > i0 ? s.a[i1] / s.a[i0] - 1 : 0;
+      sum += r;
+      dbg.push({ code, ret: r });
     }
+    P.onMonth?.(d0, dbg);
     const strat = sum / P.topN - turnover * cost;
     rows.push({ d0, d1, strat, bench: benchRet, held: selection.length, inMarket });
     held = sel;

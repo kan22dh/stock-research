@@ -86,3 +86,47 @@ where testable), DD no worse than B0 + 5pt, neighbours also pass.
 
 Stopping rule: if nothing passes, round 2 is the last round. The report says
 so plainly, with the honest arithmetic of what 10x requires.
+
+---
+
+# Round 2 result + data repair (recorded 2026-11-02, after running)
+
+Data repair (correction, not new trials): Yahoo long history had series with
+one-day moves beyond ×0.6/×1.7 (impossible under TSE daily limits) — 63/1,256
+series. Examples: 1306's 10:1 split on 2015-01-05 unadjusted (benchmark showed
+−90%); 7944 Roland stitched its pre-2014 listing to its 2020 relisting, which
+B0 repeatedly bought on fake momentum (+137% fake month). `repairBreaks()`
+rescales 1306 and drops pre-break history elsewhere. Applied to BOTH datasets.
+The 10y dataset is the same Yahoo data as production PriceCache, so the old
+"+18.7%" backtest was inflated by such series too.
+
+Repaired baseline B0 (10y): +7.3% vs TOPIX +10.7% to 2025-10; +14.3% vs +12.3%
+to 2026-06; +9.2% vs +11.9% to 2026-10. Max DD −45.9%.
+
+Round 1 rerun on repaired data: 6a/6b (top 15/20) pass both 10y halves, but on
+the long windows top20 fails L1 (+21.6% vs B0 +30.1%) → not adopted.
+Round 2 (repaired): no trial passes the rule. The 18 family (RS + dividend
+yield composite) beats B0 in L2, H1, H2 but not L1 (2009–17) for any weight.
+Observed but NOT a pass: all three 18 weights beat TOPIX in every window with
+max DD −26%…−37% vs B0 −52%. Changing the criterion to "vs TOPIX" after seeing
+this would be a forking-paths error, so it is not done.
+Dividend data sanity: holdings' trailing yield median 3.0%, p90 4.9%, max
+10.7% (special dividends, e.g. Avex 2021) — no split-corrupted dividends.
+Trial count so far: 16 (round 1) + 12 (round 2: 9 stock trials incl. one
+neighbour, 3 leverage) = 28.
+
+# Holdout declaration (written and committed BEFORE the holdout is run)
+
+- Candidate: 18a (RS rank 50% + trailing dividend-yield rank 50%, Trend
+  Template required, top 10, monthly). Chosen because 50/50 is the
+  literature's prior (Asness value+momentum), NOT because it scored best
+  (18c did; picking it would be in-sample selection).
+- Only three series are run on the holdout: 18a, B0, TOPIX (1306).
+- Window: rebalance 2025-10-31 → 2026-10-30 (12 months), long repaired dataset.
+- PASS iff 18a's holdout return > TOPIX AND > B0, AND 18a's max drawdown is no
+  worse than B0's + 5pt. Anything else = FAIL, and there is no v2.
+- If PASS: v2 becomes an EXPERIMENTAL paper account, labelled
+  「事前登録基準は不合格・ホールドアウトのみ合格の候補」, v1 untouched as control.
+- Either way this is the last research round of this rebuild.
+- Known caveats: 12 months is thin evidence; survivorship bias likely
+  flatters a yield tilt (delisted yield traps are absent from the data).
