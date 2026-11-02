@@ -13,7 +13,7 @@
 // - Monthly close-to-close fills; no slippage beyond the cost setting.
 
 import { prisma } from "./db";
-import { computeMomentumMetrics } from "./momentum";
+import { computeMomentumMetrics, lastBreakIndex } from "./momentum";
 
 export const BENCHMARK_CODE = "13060"; // TOPIX連動ETF (1306)
 
@@ -66,7 +66,7 @@ type Series = { dates: string[]; closes: number[] };
 // ¥37 instead of ¥376 — a dropped digit). Remove bars deviating >40% from the
 // centered 11-bar median: a genuine crash persists in neighboring bars so the
 // median follows it and the bar survives; a 1-3 bar glitch gets dropped.
-function cleanSeries(s: Series): Series {
+export function cleanSeries(s: Series): Series {
   const n = s.closes.length;
   if (n < 15) return s;
   const dates: string[] = [];
@@ -80,7 +80,12 @@ function cleanSeries(s: Series): Series {
     dates.push(s.dates[i]);
     closes.push(s.closes[i]);
   }
-  return { dates, closes };
+  // Then drop history before the last unadjusted split / stitched listing
+  // (lastBreakIndex). Before 2026-11 this backtest bought 7944 Roland on fake
+  // momentum from a stitched series; it was part of why the old headline
+  // (+18.7%/yr) overstated the strategy.
+  const brk = lastBreakIndex(closes);
+  return brk > 0 ? { dates: dates.slice(brk), closes: closes.slice(brk) } : { dates, closes };
 }
 
 // Load close series for the whole universe + benchmark.

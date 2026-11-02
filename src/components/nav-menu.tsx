@@ -6,6 +6,7 @@ import Link from "next/link";
 const NAV_ITEMS = [
   { href: "/", label: "銘柄検索" },
   { href: "/positions", label: "ポジション" },
+  { href: "/strategy", label: "運用ロジック" },
   { href: "/paper", label: "自動運用" },
   { href: "/signals", label: "シグナル成績" },
   { href: "/watchlist", label: "ウォッチリスト" },

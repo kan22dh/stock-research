@@ -1,4 +1,4 @@
-// Goal math: 300万円 → 5000万円 / 5年 progress tracking.
+// Goal math: progress tracking against the owner's goal (2026-11: 300万円 → 3,000万円 / 10年 = 10×, 年25.9%).
 import { prisma } from "./db";
 
 export type GoalConfig = {
@@ -9,10 +9,10 @@ export type GoalConfig = {
 };
 
 const DEFAULT_GOAL: GoalConfig = {
-  targetAmount: 50_000_000,
+  targetAmount: 30_000_000,
   startAmount: 3_000_000,
-  startDate: "2026-07-01",
-  years: 5,
+  startDate: "2026-11-02",
+  years: 10,
 };
 
 export async function getGoalConfig(): Promise<GoalConfig> {

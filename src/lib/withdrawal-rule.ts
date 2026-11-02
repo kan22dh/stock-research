@@ -1,19 +1,21 @@
 // Objective withdrawal/circuit-breaker rule for the paper autopilot,
-// grounded in the strategy's OWN 10-year backtested worst-case history
-// (scripts/rolling-worst-analysis.ts, 2017-08〜2026-07, 107 months of
-// RS-top10 + Trend Template vs TOPIX ETF):
+// grounded in the strategy's OWN backtested worst-case history.
 //
-//   worst rolling 12-month excess return (strategy - benchmark): -34.5%
-//   worst rolling 24-month excess return:                        -43.8%
-//   worst monthly-close max drawdown:                            -40.5%
+// Re-derived 2026-11 on REPAIRED data (scripts/research/rolling-worst.ts):
+// the original 2026-07 figures (−40.5% / −34.5pt / −43.8pt) came from Yahoo
+// series with unadjusted splits and a stitched listing (see lastBreakIndex in
+// momentum.ts), and on clean data the strategy's own history already went
+// past every old threshold. Worst cases, RS-top10 + Trend Template vs TOPIX:
 //
-// Thresholds below add a margin beyond each historical worst so that a
-// merely-bad-but-historically-normal patch (which WILL happen — this is a
-// 44%-monthly-win-rate strategy) does NOT trigger. A breach means live
-// performance is outside anything this exact strategy has done in 10 years
-// of real market history, including the 2022 bear market and 2023's rough
-// stretch — i.e. something structurally different, not garden-variety bad
-// luck the backtest already accounts for.
+//                                  2017-11→2026-10   2009-01→2026-10
+//   max drawdown (month-end):           −45.9%            −52.0%
+//   worst rolling 12m excess:           −33.8pt           −42.8pt
+//   worst rolling 24m excess:           −50.4pt           −50.4pt
+//
+// Thresholds sit a few points beyond the LONGER history's worst, so a
+// bad-but-historically-normal patch does NOT trigger. A breach means live
+// performance is outside anything this strategy did in 17 years — something
+// structurally different, not bad luck the backtest already contains.
 //
 // This is a HARD STOP proposal, not a silent auto-liquidation: it raises a
 // Signal + a loud banner. A human decides what "stop" means (halt new
@@ -23,9 +25,9 @@
 import { prisma } from "./db";
 
 export const WITHDRAWAL_THRESHOLDS = {
-  maxDrawdownPct: -45, // worst backtested was -40.5%
-  rolling12mExcessPct: -40, // worst backtested was -34.5%
-  rolling24mExcessPct: -50, // worst backtested was -43.8%
+  maxDrawdownPct: -55, // worst backtested (2009→, repaired) −52.0%
+  rolling12mExcessPct: -45, // worst backtested −42.8pt
+  rolling24mExcessPct: -55, // worst backtested −50.4pt
 };
 
 const BENCHMARK_CODE = "13060";

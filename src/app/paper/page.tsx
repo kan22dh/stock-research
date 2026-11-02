@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { isGapReview } from "@/lib/paper-review";
 import { prisma } from "@/lib/db";
 import { BacktestChart } from "@/components/backtest-chart";
 import { WithdrawalAlert } from "@/components/withdrawal-alert";
@@ -96,8 +97,10 @@ export default async function PaperPage() {
       <header>
         <h1 className="text-2xl font-bold tracking-tight">🤖 自動運用(仮想口座)</h1>
         <p className="text-sm text-neutral-600 dark:text-neutral-400 mt-1">
-          毎月初の朝、Cronが検証で唯一生き残った戦略「RS上位10銘柄+Trend Template・月次リバランス」(10年で年+18.7%)で仮想60万円を全自動売買します。
-          実弾投入(kabuステーションAPI連携)の前提となる成績記録です。
+          毎月初の朝、Cronが「RS上位10銘柄+Trend Template+増収10%・月次リバランス」で仮想60万円を全自動売買します。
+          修復済みデータで測り直すと、このルールは2017年以降TOPIXに勝てていません(年+7.3% vs +10.7%、2017-11〜2025-10)。根拠と2026-11の見直し結果は
+          <Link href="/strategy" className="underline mx-1">運用ロジックと根拠</Link>
+          にまとめています。この口座は「ルールが実際にどう動くか」を記録する対照実験として続けています。
         </p>
       </header>
 
@@ -152,17 +155,23 @@ export default async function PaperPage() {
           <div className="space-y-2">
             {reviews.map((r) => {
               const isFlagged = r.note.includes("🚩");
+              const gap = isGapReview(r.note);
               return (
                 <div
                   key={r.month}
                   className={`rounded-lg px-4 py-3 text-sm ${
-                    isFlagged
-                      ? "bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900"
-                      : "bg-neutral-50 dark:bg-neutral-800/40"
+                    gap
+                      ? "bg-neutral-100 dark:bg-neutral-800/70 border border-dashed border-neutral-300 dark:border-neutral-700"
+                      : isFlagged
+                        ? "bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900"
+                        : "bg-neutral-50 dark:bg-neutral-800/40"
                   }`}
                 >
                   <div className="flex items-center justify-between gap-3 flex-wrap">
                     <span className="font-medium">{r.month}</span>
+                    {gap ? (
+                      <span className="text-xs font-semibold text-neutral-500">データ欠損(成績として扱わない)</span>
+                    ) : (
                     <div className="flex items-center gap-3 tabular-nums text-xs">
                       <span
                         className={
@@ -179,6 +188,7 @@ export default async function PaperPage() {
                         {r.benchReturnPct.toFixed(1)}%)
                       </span>
                     </div>
+                    )}
                   </div>
                   <p className="mt-1 text-neutral-600 dark:text-neutral-400 text-xs">
                     {r.note}
@@ -329,8 +339,8 @@ export default async function PaperPage() {
       <section className="rounded-xl border border-black/10 dark:border-white/10 bg-neutral-50 dark:bg-neutral-800/30 px-5 py-4 text-xs text-neutral-600 dark:text-neutral-400 space-y-1.5">
         <div className="font-semibold text-neutral-700 dark:text-neutral-300">この口座の意味</div>
         <div>・実弾自動売買(L5: kabuステーションAPI)へ進む判断材料です。3〜6ヶ月の記録でTOPIXと比較してから判断します。</div>
-        <div>・戦略は10年検証で唯一指数に勝った「RS上位10+Trend Template・月次リバランス」(年+18.7% vs TOPIX+13.4%)。月中の損切り・VCPブレイクアウト売買は<strong>検証で有害と判明したため意図的に外しています</strong>(日次ブレイクアウト機械売買は年+4.5%と指数に大敗)。</div>
-        <div>・想定される弱み(検証済み): 最大DDは指数の約2倍・10年中5年は指数に劣後。数ヶ月の劣後で止めると最悪の結果になります。</div>
+        <div>・以前ここに書いていた「10年で年+18.7%(TOPIX+13.4%)」は、好調だった期間の切り取りと壊れた株価データ(未調整の分割・継ぎはぎ上場)に押し上げられた数字でした。修復後は2017-11〜2025-10で年+7.3%(TOPIX+10.7%)、今日までで年+9.2%(+11.9%)です。月中の損切り・VCPブレイクアウト売買は検証で有害だったため外しています。</div>
+        <div>・想定される弱み: 最大下落は−46%(2017年以降)〜−52%(2009年以降)と指数の約2倍。2026-11の全面見直し(28通り+最終テスト)でも、これを確実に上回るルールは見つかりませんでした。</div>
         <div>・約定は月初朝の観測価格、株数はS株(単元未満株)前提の1株単位です。実際のSBI証券のS株は1日3回約定(前場始値/後場始値/後場引け・成行のみ)のため、朝の指示書から発注すると当日後場始値での約定が基本線になり、シミュレーションとのズレが生じます。</div>
         <div>・ホームのVCP/ブレイクアウトシグナルは裁量トレード(L2/L4)の練習用で、この機械口座は使いません。</div>
         <div>・月次振り返りは事実の自動記録のみです。数ヶ月の実績でルール(RS上位10・増収10%ゲート等)を自動で変えることはしません。それは10年バックテストへの過剰適合になるためです。3ヶ月連続劣後の警告は「/backtestで前提を再検証する」ための合図であり、自動での戦略変更のトリガーではありません。</div>

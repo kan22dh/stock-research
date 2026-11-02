@@ -261,6 +261,10 @@ model PaperReview {
   avgLossYen    Float?
   netPnlYen     Float
   note          String
+  // Weekdays in the month with a PaperEquity mark. Added after the 2026-08-12
+  // → 10-02 outage produced a "September 0.0%" review from a month with zero
+  // data. Below ~10 the month's numbers are not a measurement; the UI says so.
+  coverageDays  Int?
   createdAt     DateTime @default(now())
 }
 

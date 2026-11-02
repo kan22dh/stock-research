@@ -23,11 +23,6 @@ function monthBounds(month: string): { start: string; end: string } {
   return { start, end: `${nextMonth}-01` };
 }
 
-function prevMonth(month: string): string {
-  const [y, m] = month.split("-").map(Number);
-  return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, "0")}`;
-}
-
 async function equityAt(dateExclusiveUpperBound: string): Promise<number | null> {
   const row = await prisma.paperEquity.findFirst({
     where: { date: { lt: dateExclusiveUpperBound } },
@@ -46,23 +41,54 @@ async function benchmarkValueAt(dateExclusiveUpperBound: string): Promise<number
   return row ? (row.adjClose ?? row.close) : null;
 }
 
+// Weekdays in [start, end) — the denominator for coverage.
+function weekdaysIn(start: string, end: string): number {
+  let n = 0;
+  for (let d = new Date(`${start}T00:00:00Z`); d < new Date(`${end}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + 1)) {
+    const w = d.getUTCDay();
+    if (w !== 0 && w !== 6) n++;
+  }
+  return n;
+}
+
+// A month with fewer marked days than this is reported as a data gap, not
+// as a return. (A normal month has ~21 weekdays.)
+export const MIN_COVERAGE_DAYS = 10;
+// The gap verdict also depends on the account start date, so the UI reads it
+// from the note rather than re-deriving it from coverageDays.
+export const GAP_MARK = "⚠ データ欠損";
+export const isGapReview = (note: string) => note.includes(GAP_MARK);
+
 // Called from paper-autopilot.ts right before starting the rebalance for
-// `currentMonth` — reviews the month that just ended (currentMonth's
-// predecessor). No-ops (and doesn't overwrite) if already computed.
+// `currentMonth`. Reviews EVERY closed month since the last review, not just
+// the one before currentMonth — a cron outage that skips a whole month must
+// not silently drop the month before it (2026-08 was never reviewed for that
+// reason). Existing rows are left alone.
 export async function computeMonthlyReview(currentMonth: string): Promise<void> {
-  const reviewMonth = prevMonth(currentMonth);
+  const firstEquity = await prisma.paperEquity.findFirst({ orderBy: { date: "asc" }, select: { date: true } });
+  if (!firstEquity) return;
+  const months: string[] = [];
+  for (let m = firstEquity.date.slice(0, 7); m < currentMonth; m = nextMonth(m)) months.push(m);
+  for (const m of months) await reviewMonth(m, firstEquity.date);
+}
+
+function nextMonth(month: string): string {
+  const [y, m] = month.split("-").map(Number);
+  return m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`;
+}
+
+async function reviewMonth(reviewMonth: string, accountStart: string): Promise<void> {
   const existing = await prisma.paperReview.findUnique({ where: { month: reviewMonth } });
   if (existing) return;
 
   const { start, end } = monthBounds(reviewMonth);
-  const [equityStart, equityEnd, benchStart, benchEnd] = await Promise.all([
+  const [equityStart, equityEnd, benchStart, benchEnd, coverageDays] = await Promise.all([
     equityAt(start).then((v) => v ?? 600_000), // no prior data → assume start-of-account
     equityAt(end),
     benchmarkValueAt(start),
     benchmarkValueAt(end),
+    prisma.paperEquity.count({ where: { date: { gte: start, lt: end } } }),
   ]);
-  // Nothing to review yet (e.g. very first month, cron gap) — skip silently,
-  // this isn't a failure, just insufficient history for that month.
   if (equityEnd == null || benchStart == null || benchEnd == null) return;
 
   const returnPct = (equityEnd / equityStart - 1) * 100;
@@ -80,13 +106,24 @@ export async function computeMonthlyReview(currentMonth: string): Promise<void> 
     losses.length > 0 ? losses.reduce((s, v) => s + v, 0) / losses.length : null;
   const netPnlYen = pnls.reduce((s, v) => s + v, 0);
 
-  const diff = returnPct - benchReturnPct;
   const lines: string[] = [];
-  lines.push(
-    diff >= 0
-      ? `TOPIXを${diff.toFixed(1)}pt上回りました。`
-      : `TOPIXに${Math.abs(diff).toFixed(1)}pt劣後しました。`,
-  );
+  // The opening month only counts from the account's first day.
+  const from = accountStart > start ? accountStart : start;
+  const weekdays = weekdaysIn(from, end);
+  const isGap = coverageDays < Math.min(MIN_COVERAGE_DAYS, Math.ceil(weekdays * 0.5));
+  if (from !== start) lines.push(`開設月(${accountStart}開始)。`);
+  if (isGap) {
+    lines.push(
+      `${GAP_MARK}: この月は評価記録が${coverageDays}/${weekdays}営業日しかありません(自動更新の停止)。数値は成績として扱えません。`,
+    );
+  } else {
+    const diff = returnPct - benchReturnPct;
+    lines.push(
+      diff >= 0
+        ? `TOPIXを${diff.toFixed(1)}pt上回りました。`
+        : `TOPIXに${Math.abs(diff).toFixed(1)}pt劣後しました。`,
+    );
+  }
   if (trades.length > 0) {
     lines.push(
       `決済${trades.length}件・勝率${((wins.length / trades.length) * 100).toFixed(0)}%・純損益${Math.round(netPnlYen).toLocaleString()}円。`,
@@ -95,18 +132,25 @@ export async function computeMonthlyReview(currentMonth: string): Promise<void> 
     lines.push("この月は決済(銘柄入替による売却)がありませんでした。");
   }
 
-  // Sustained-underperformance flag: last 2 reviews + this one all negative
-  // diff → surface for human attention, don't auto-act.
-  const recent = await prisma.paperReview.findMany({
-    orderBy: { month: "desc" },
-    take: 2,
-    select: { returnPct: true, benchReturnPct: true },
-  });
+  // Sustained-underperformance flag over the last 3 MEASURED months (gap
+  // months are skipped, not counted as either outcome).
+  const recent = (
+    await prisma.paperReview.findMany({
+      where: { month: { lt: reviewMonth } },
+      orderBy: { month: "desc" },
+      select: { returnPct: true, benchReturnPct: true, note: true },
+    })
+  )
+    .filter((r) => !isGapReview(r.note))
+    .slice(0, 2);
   const allRecentUnderperform =
-    diff < 0 && recent.length === 2 && recent.every((r) => r.returnPct < r.benchReturnPct);
+    !isGap &&
+    returnPct < benchReturnPct &&
+    recent.length === 2 &&
+    recent.every((r) => r.returnPct < r.benchReturnPct);
   if (allRecentUnderperform) {
     lines.push(
-      "🚩 3ヶ月連続で指数に劣後しています。/backtestで前提が今も成立しているか確認することを推奨します(自動での戦略変更は行いません)。",
+      "🚩 計測できた直近3ヶ月すべてで指数に劣後しています。/backtestで前提が今も成立しているか確認することを推奨します(自動での戦略変更は行いません)。",
     );
   }
 
@@ -121,6 +165,7 @@ export async function computeMonthlyReview(currentMonth: string): Promise<void> 
       avgLossYen,
       netPnlYen,
       note: lines.join(""),
+      coverageDays,
     },
   });
 }

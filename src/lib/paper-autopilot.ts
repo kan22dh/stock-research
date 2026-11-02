@@ -1,5 +1,9 @@
 // L3 paper autopilot — monthly rebalance into the top-10 by RS raw momentum
-// among Trend Template passers (+18.7%/yr vs TOPIX +13.4% over 10y, §7),
+// among Trend Template passers. NOTE (2026-11): the old "+18.7%/yr vs TOPIX
+// +13.4% over 10y" headline did not survive a data repair + reconciliation —
+// on clean data this core is +7.3% vs TOPIX +10.7% (2017-11→2025-10), and no
+// alternative in the 28-trial rebuild study beat it robustly
+// (scripts/research/PREREGISTRATION.md). Kept unchanged as the control.
 // gated on latest-FY sales growth ≥10% (CAN SLIM-style; §9: +30pt/yr with
 // halved DD over the 24-month window fundamentals history allows, robust
 // across 5-20% thresholds).

@@ -38,6 +38,25 @@ export function validBarIndices(closes: number[]): number[] {
   return kept;
 }
 
+// Yahoo leaves some corporate actions unadjusted or stitches unrelated
+// listings together (found in 2026-11: 1306's 2015 10:1 split, 7944 Roland's
+// 2014 delisting glued to its 2020 relisting, recent reverse splits such as
+// 5721/6740). Under TSE daily price limits a one-day move beyond ×0.6 / ×1.7
+// is effectively impossible, so it marks a data break, not a real move — and
+// it fabricates momentum (a 1:2 reverse split reads as a +100% day). Returns
+// the index of the LAST break, or -1. Callers use only bars from that index
+// on, which conservatively drops history rather than inventing returns.
+export const BREAK_LO = 0.6;
+export const BREAK_HI = 1.7;
+export function lastBreakIndex(closes: number[]): number {
+  let last = -1;
+  for (let i = 1; i < closes.length; i++) {
+    const r = closes[i] / closes[i - 1];
+    if (r < BREAK_LO || r > BREAK_HI) last = i;
+  }
+  return last;
+}
+
 export type TrendTemplateCondition = { label: string; pass: boolean };
 
 export type MomentumMetrics = {

@@ -6,6 +6,7 @@ import {
   computeMomentumMetrics,
   computeVcp,
   validBarIndices,
+  lastBreakIndex,
 } from "./momentum";
 
 // Yahoo has no meaningful rate limit (unlike J-Quants), so this can run on a
@@ -46,9 +47,14 @@ async function computeMomentumFields(
 
   // Drop corrupt bars, then compute momentum on dividend-adjusted closes
   // (total-return RS) and VCP on raw OHLCV (pivot must be a tradeable price).
-  const clean = validBarIndices(quote.bars.map((b) => b.close)).map(
+  const valid = validBarIndices(quote.bars.map((b) => b.close)).map(
     (i) => quote.bars[i],
   );
+  // Drop everything before an unadjusted split / stitched listing (see
+  // lastBreakIndex). With < 1 year left, rsRaw comes out null and the stock
+  // simply isn't ranked until enough clean history accumulates.
+  const brk = lastBreakIndex(valid.map((b) => b.adjClose ?? b.close));
+  const clean = brk > 0 ? valid.slice(brk) : valid;
   if (clean.length < 60) return null;
   const m = computeMomentumMetrics(
     clean.map((b) => ({ close: b.adjClose ?? b.close })),

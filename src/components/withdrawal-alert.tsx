@@ -3,8 +3,8 @@ import { checkWithdrawalTriggers, WITHDRAWAL_THRESHOLDS } from "@/lib/withdrawal
 
 // The most severe banner in the app. Renders ONLY when the paper account's
 // live performance has gone beyond anything this exact strategy did in its
-// own 10-year backtest (2017-08〜2026-07: worst 12mo excess -34.5%, worst
-// 24mo excess -43.8%, worst drawdown -40.5% — see withdrawal-rule.ts). That
+// own backtest on repaired data (2009-01〜2026-10: worst 12mo excess −42.8pt,
+// worst 24mo excess −50.4pt, worst drawdown −52.0% — see withdrawal-rule.ts). That
 // means "normal bad luck the backtest already priced in" does NOT trigger
 // this — only genuinely unprecedented-for-this-strategy underperformance
 // does. This is a stop-and-reassess trigger, not an auto-liquidation.

@@ -67,6 +67,21 @@ const SERIES_META: Record<string, Omit<FredSeries, "points" | "source">> = {
     description: "CBOE Volatility Index - 市場のリスク認識",
     unit: "Index",
   },
+  // Japan rates (OECD via FRED, MONTHLY with a 1–2 month lag) — context for
+  // /strategy's macro panel. Not used as trading rules: no tested rule based
+  // on rate levels survived (see scripts/research/PREREGISTRATION.md).
+  IRLTLT01JPM156N: {
+    id: "IRLTLT01JPM156N",
+    label: "日本10年国債利回り(月次)",
+    description: "Long-Term Government Bond Yields: 10-Year for Japan (OECD, 月次)",
+    unit: "%",
+  },
+  IRSTCI01JPM156N: {
+    id: "IRSTCI01JPM156N",
+    label: "日本コールレート(月次)",
+    description: "Immediate Rates: Call Money/Interbank Rate for Japan (OECD, 月次・日銀の政策金利の目安)",
+    unit: "%",
+  },
 };
 
 export const FRED_SERIES_IDS = Object.keys(SERIES_META) as Array<keyof typeof SERIES_META>;
