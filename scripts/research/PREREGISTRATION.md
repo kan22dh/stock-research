@@ -152,3 +152,61 @@ dividend-yield rank into the RS rank roughly halves drawdown at a similar
 return, and broader books (top 15–20) also cut drawdown.
 10× in 10 years needs 25.9%/yr. Nothing here supports expecting that from
 stock selection rules; TOPIX at ~12%/yr compounds to ~3× in 10 years.
+
+---
+
+# Round 3 — annual loss budget (written and committed BEFORE running, 2026-11-04)
+
+Owner's goal (/goal, 2026-11-04): maximise return, "never lose in a year",
+SBI individual stocks, with fees reflected. Stated once: with cash at 0%, no
+rule can guarantee a non-negative year (a floor at 100% of the start value
+means zero equity exposure). What CAN be built is an explicit annual loss
+budget L: the mechanism bounds the year's loss near −L, except for overnight
+gaps. So "zero negative years" is NOT the pass rule; L is the owner's choice
+and the deliverable is the L-vs-return frontier.
+
+## Mechanism (CPPI / TIPP — Black & Perold 1992; Estep & Kritzman 1988)
+- Each Jan: floor F = V_start_of_year × (1 − L).
+- Equity exposure target e = clamp(m × (V − F) / V, 0, 1); the rest is cash (0%).
+- Floor types: CPPI = F fixed for the year; TIPP = F ratchets to
+  max(F, HWM_ytd × (1 − L)) (locks in gains within the year).
+- V ≤ F → all cash until year end.
+- Checked on each close; resize only if |e_target − e_now| > 0.10.
+
+## Underlying (chosen BEFORE seeing results, by mechanism)
+18a: RS rank 50% + trailing dividend-yield rank 50%, Trend Template, top 10,
+target list refreshed monthly. Chosen because CPPI loses to whipsaw on
+volatile books, and 18a had the lowest drawdown family (−31% vs B0 −52%);
+10 names rather than 20 because the base capital is small.
+
+## Execution and costs (SBI証券, verified 2026-11-04)
+- Signal on the close; order placed that evening (14:00–24:00 window) →
+  S株 fill at the NEXT trading day's opening price (前場始値). If that bar
+  has no open, the order expires and is retried the next day.
+- Whole shares only (S株 = 1-share units). Base capital ¥600,000
+  (the owner's actual non-NISA cash); sensitivity ¥3,000,000.
+- Commission 0 (ゼロ革命: インターネットコース + 電子交付 required);
+  sensitivity: 0.1% per side. No spread.
+- 特定口座 tax 20.315% on dividends (withheld when credited) and on the
+  calendar year's net realised gain (losses offset within the year only).
+  NISA is not modelled: monthly turnover + resizing would exhaust the
+  240万/yr 成長投資枠, and quota freed by a sale only returns next year.
+- Dividends credited in cash on the ex-date (timing simplification).
+
+## Grid (trials 29–46; cumulative 46)
+L ∈ {3%, 5%, 8%} × m ∈ {3, 4, 5} × floor ∈ {CPPI, TIPP} = 18.
+Default (pre-chosen, reported first): L = 5%, m = 4, TIPP.
+
+## Reported for every config
+worst calendar year, worst floor breach (year-end vs −L), count of negative
+years, after-tax CAGR, max drawdown, order days per year, unbuyable targets,
+average cash share. Gap stress days named: 2011-03-14/15, 2020-03,
+2024-08-05. Window 2009-01 → 2026-10 (2026 partial).
+
+## No clean holdout remains
+The 2025-11 → 2026-10 window was used in round 2 and its path is known. The
+live v2 paper account from 2026-11 onward is the only out-of-sample test.
+
+## Stopping rule
+If the default L shows negative years, report them as they are. L is not
+lowered until they disappear.
