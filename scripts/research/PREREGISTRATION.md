@@ -242,3 +242,13 @@ Findings:
   failed the round-2 holdout vs TOPIX by 1.2pt, and the 2009–17 half carries
   the most survivorship bias. Not a validated edge.
 Trial count: 46 (+2 reference series).
+
+## Reference rows added after the round-3 run (not trials)
+A fixed stock share (rest in cash, resized on a 5pt drift) matches the guard:
+| fixed 13% in 18a | +2.1% | worst −2.7% | negative 4/17 | max DD −5.7% |
+| fixed 20% in 18a | +3.6% | worst −4.3% | negative 3/17 | max DD −8.6% |
+Conclusion: the annual loss bound comes from LOW EXPOSURE, not from the
+CPPI/TIPP mechanism (worst year ≈ exposure × the book's worst year). The live
+v2 account still runs the pre-registered default (L5 m4 TIPP) as the
+out-of-sample record; switching to a fixed mix after seeing this would be an
+outcome-driven choice and is left to the owner.

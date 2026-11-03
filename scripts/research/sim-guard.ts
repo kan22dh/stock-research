@@ -85,7 +85,10 @@ function monthlyTargets(stocks: S[], days: string[]): Map<string, string[]> {
   return out;
 }
 
-export type SimConfig = GuardParams & { label: string; capital: number; commission: number; overlay: boolean };
+// fixedExposure: reference rows only (not trials) — a constant stock share,
+// resized when it drifts beyond the band. Answers "does the guard protect
+// anything a plain low-exposure mix wouldn't?".
+export type SimConfig = GuardParams & { label: string; capital: number; commission: number; overlay: boolean; fixedExposure?: number };
 export type YearRow = { year: number; ret: number; startValue: number; endValue: number; taxPaid: number; locked: boolean };
 
 export function simulate(cfg: SimConfig, data: { stocks: S[]; bench: S; days: string[]; targets: Map<string, string[]> }) {
@@ -193,12 +196,12 @@ export function simulate(cfg: SimConfig, data: { stocks: S[]; bench: S; days: st
     if (k % 5 === 0 || yearEnd) curve.push({ d, v: Math.round(value) });
 
     // 5) decide tomorrow's orders
-    const exposure = cfg.overlay ? updateGuard(gs, value, cfg) : 1;
+    const exposure = cfg.fixedExposure != null ? cfg.fixedExposure : cfg.overlay ? updateGuard(gs, value, cfg) : 1;
     const currentExp = value > 0 ? stockValue / value : 0;
     const newList = data.targets.get(d);
     let replan = false;
     if (newList) { targets = newList; replan = true; }
-    if (cfg.overlay && needsResize(exposure, currentExp, cfg)) replan = true;
+    if ((cfg.overlay || cfg.fixedExposure != null) && needsResize(exposure, currentExp, cfg)) replan = true;
     if (replan && pending.length === 0) {
       const { orders, unbuyable } = planOrders({
         value, exposure, targets, holdings,
@@ -282,6 +285,10 @@ if (require.main === module) {
   const tb = topixBuyHold(bench, days, 600_000);
   console.log(`${tb.label.padEnd(30)} 税引後年率 ${pct(tb.cagr).padStart(7)}  最悪年 ${pct(tb.worstYear).padStart(7)}  負け年 ${String(tb.negativeYears).padStart(2)}/17  最大DD ${pct(tb.maxDD).padStart(7)}`);
 
+  console.log("\n== 参照: 株の比率を固定(残り現金) ==");
+  const fixed = [0.13, 0.2].map((x) => simulate({ label: `固定 株${Math.round(x * 100)}%`, lossBudget: 0.05, multiplier: 4, floorType: "TIPP", capital: 600_000, band: 0.05, commission: 0, overlay: false, fixedExposure: x }, data));
+  for (const r of fixed) console.log(line(r));
+
   console.log("\n== グリッド(L × m × 床の種類) 元手60万・手数料0 ==");
   for (const L of [0.03, 0.05, 0.08]) for (const m of [3, 4, 5]) for (const ft of ["CPPI", "TIPP"] as const) {
     if (L === 0.05 && m === 4 && ft === "TIPP") continue;
@@ -310,6 +317,7 @@ if (require.main === module) {
     default: { ...slim(def), gapRet: def.gapRet },
     raw18a: slim(results[1]),
     topix: slim(tb),
+    fixed: fixed.map(slim),
     grid: results.slice(2, 19).map(slim),
     sensitivity: results.slice(19).map(slim),
     curves: { default: def.curve, raw18a: results[1].curve, topix: tb.curve },
