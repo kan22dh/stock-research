@@ -210,3 +210,35 @@ live v2 paper account from 2026-11 onward is the only out-of-sample test.
 ## Stopping rule
 If the default L shows negative years, report them as they are. L is not
 lowered until they disappear.
+
+# Round 3 result (2026-11-04, scripts/research/sim-guard.ts → src/data/guard-sim.json)
+
+Implementation detail fixed before the run: target lists refresh on the
+close of each month's FIRST session (the live evening job can recognise the
+first session on the day; it cannot recognise the last).
+
+Window 2009-01-05 → 2026-10-30, ¥600,000, 特定口座, commission 0,
+fills at next open, whole shares. 2026 is partial.
+
+| config | after-tax CAGR | worst full year | negative years /17 | max DD | cash avg |
+|---|---|---|---|---|---|
+| DEFAULT L5 m4 TIPP | +2.1% | −2.6% | 5 | −7.1% | 87% |
+| 18a, no cap | +16.2% | −11.3% | 5 | −40.0% | 16% |
+| TOPIX 1306 buy & hold | +10.6% | −18.9% | 5 | −33.2% | — |
+| L8 m4 CPPI | +7.2% | −9.8% | 4 | −26.1% | 59% |
+| L8 m5 CPPI | +9.4% | −11.6% | 4 | −27.1% | 49% |
+
+Findings:
+- The loss budget works: no TIPP config ended a year below −L; worst gap day
+  for the default was −2.1% (2024-08-05).
+- It is expensive. TIPP's floor trails the year's high, so the cushion never
+  exceeds L and exposure is capped at m×L (20% for the default): most of the
+  time the account sits in 0%-yield cash. Plain CPPI lets exposure grow but
+  breaches L on gap years (2011, 2018) at m=5.
+- No config produced zero negative years; the default had 5 small ones
+  (−0.4% … −2.6%). Per the stopping rule, L was not lowered.
+- Sensitivity: ¥3M capital +2.3%; 0.1%/side commission +2.0% (default).
+- 18a without the cap beat TOPIX here (+16.2% vs +10.6% after tax) but
+  failed the round-2 holdout vs TOPIX by 1.2pt, and the 2009–17 half carries
+  the most survivorship bias. Not a validated edge.
+Trial count: 46 (+2 reference series).
