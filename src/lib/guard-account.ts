@@ -9,11 +9,18 @@
 //   3. guard: exposure = m × (V − floor) / V (TIPP floor ratchets)
 //   4. month's first session → refresh the 18a target list
 //   5. if the list changed or exposure drifted past the band → write tonight's
-//      orders (the owner enters them 14:00–24:00 → fill at tomorrow's open)
+//      orders (the owner enters them 14:00–07:00 → fill at the next open)
 // Idempotent: one equity row per date, one fill per order, one dividend
 // credit per (code, ex-date), tax settled once per year. A Japanese market
 // holiday is a successful no-op (no 1306 bar for today).
+//
+// Crash safety: the session loop only mutates memory; its effects (fills,
+// trades, dividends, positions, cash, year state) commit in ONE transaction
+// before the heavy monthly universe pass, and the month's targets + tonight's
+// orders + the day's equity row commit together in a second one. A missing
+// quote fails the run before anything is written.
 
+import { Prisma } from "@prisma/client";
 import { prisma } from "./db";
 import { jstToday } from "./signals";
 import {
@@ -26,13 +33,16 @@ export const GUARD_START_CASH = 600_000;
 export const GUARD_COMMISSION = 0; // SBI ゼロ革命 (インターネットコース + 電子交付)
 const ORDER_EXPIRY_SESSIONS = 5;
 const PARAMS = DEFAULT_GUARD; // pre-registered: L 5%, m 4, TIPP, band 0.10
+const EARLIEST_RUN_HOUR_JST = 16; // the close is 15:30; never mark on a partial bar
 
 async function getS(key: string): Promise<string | null> {
   return (await prisma.appSetting.findUnique({ where: { key } }))?.value ?? null;
 }
-async function setS(key: string, value: string | number | boolean): Promise<void> {
-  const v = String(value);
-  await prisma.appSetting.upsert({ where: { key }, create: { key, value: v }, update: { value: v } });
+
+function settingWrites(kv: [string, string | number | boolean][]) {
+  return kv.map(([key, v]) =>
+    prisma.appSetting.upsert({ where: { key }, create: { key, value: String(v) }, update: { value: String(v) } }),
+  );
 }
 
 export type GuardRunResult = {
@@ -53,13 +63,22 @@ export type GuardRunResult = {
 // look ahead. Used once to open the account on 2026-11-02, the first
 // session of November.
 export async function runGuardEvening(opts: { force?: boolean; asOf?: string } = {}): Promise<GuardRunResult> {
+  if (opts.asOf && opts.asOf >= jstToday()) throw new Error("asOf は過去の営業日のみ指定できます");
   const today = opts.asOf ?? jstToday();
 
   // Trading-day check from 1306's own calendar.
   const bench = await fetchGuardBars("13060", "3mo");
   if (!bench) throw new Error("benchmark 1306: Yahoo returned no data");
-  if (bench.t[bench.t.length - 1] !== today) {
-    return { date: today, session: false, note: `立会なし(休日/未公表)。1306最新足 ${bench.t[bench.t.length - 1]}` };
+  const latest = bench.t[bench.t.length - 1];
+  if (latest !== today) {
+    return { date: today, session: false, note: `立会なし(休日/未公表)。1306最新足 ${latest}` };
+  }
+  // During the session today's bar is partial: processing now would mark the
+  // day at intraday prices and turn the real evening run into a no-op.
+  // Refuse as a FAILURE so health stays red and the 17:00 slot does the work.
+  const jstHour = new Date(Date.now() + 9 * 3600 * 1000).getUTCHours();
+  if (!opts.asOf && jstHour < EARLIEST_RUN_HOUR_JST) {
+    throw new Error(`市場時間中(${jstHour}時台)は処理しません。終値確定後(${EARLIEST_RUN_HOUR_JST}時以降)に実行します`);
   }
   if (!opts.force && (await prisma.guardEquity.findUnique({ where: { date: today } }))) {
     return { date: today, session: true, note: "本日分は処理済み" };
@@ -87,24 +106,30 @@ export async function runGuardEvening(opts: { force?: boolean; asOf?: string } =
 
   const codes = [...new Set([...holdings.keys(), ...pending.map((o) => o.code)])];
   const bars = new Map<string, GuardBars>();
-  for (const [code, b] of (await mapPool(codes, 6, async (c) => [c, await fetchGuardBars(c, "3mo")] as const))) {
+  for (const [code, b] of await mapPool(codes, 6, async (c) => [c, await fetchGuardBars(c, "3mo")] as const)) {
     if (b) bars.set(code, b);
   }
+  // A missing quote must not be valued at ¥0 (it could eat the cushion and
+  // lock the year) or burn a pending order's retries: fail before writing.
+  const missing = codes.filter((c) => !bars.has(c));
+  if (missing.length > 0) throw new Error(`株価を取得できない銘柄があります: ${missing.join(", ")}`);
 
-  // Sessions to process: after the last processed one, up to today.
+  // ---- process sessions in memory ----
   const sessions = lastDate ? bench.t.filter((d) => d > lastDate && d <= today) : [today];
-  let fills = 0, divCount = 0;
+  let fills = 0;
+  let divCount = 0;
   let lastValue = Number((await getS("guardLastValue")) ?? cash);
+  const writes: Prisma.PrismaPromise<unknown>[] = [];
+  const settings: [string, string | number | boolean][] = [];
 
   for (const d of sessions) {
     // Year rollover: settle last year's capital-gains tax once, then reset.
     if (Number(d.slice(0, 4)) !== gs.year) {
-      const settled = await getS(`guardTaxSettled:${gs.year}`);
-      if (!settled) {
+      if (!(await getS(`guardTaxSettled:${gs.year}`))) {
         const cgt = Math.max(0, realizedYtd) * TAX_RATE;
         cash -= cgt;
         lastValue -= cgt;
-        await setS(`guardTaxSettled:${gs.year}`, Math.round(cgt));
+        settings.push([`guardTaxSettled:${gs.year}`, Math.round(cgt)]);
       }
       realizedYtd = 0;
       gs = newYear(Number(d.slice(0, 4)), lastValue, PARAMS);
@@ -112,15 +137,13 @@ export async function runGuardEvening(opts: { force?: boolean; asOf?: string } =
 
     // Dividends on shares held at the previous close.
     for (const [code, sh] of holdings) {
-      const b = bars.get(code);
-      if (!b || sh <= 0) continue;
-      for (const [exd, amt] of b.divs) {
+      if (sh <= 0) continue;
+      for (const [exd, amt] of bars.get(code)!.divs) {
         if (exd !== d) continue;
-        const done = await prisma.guardDividend.findUnique({ where: { code_exDate: { code, exDate: exd } } });
-        if (done) continue;
+        if (await prisma.guardDividend.findUnique({ where: { code_exDate: { code, exDate: exd } } })) continue;
         const gross = sh * amt;
         cash += gross * (1 - TAX_RATE);
-        await prisma.guardDividend.create({ data: { code, exDate: exd, shares: sh, gross, tax: gross * TAX_RATE } });
+        writes.push(prisma.guardDividend.create({ data: { code, exDate: exd, shares: sh, gross, tax: gross * TAX_RATE } }));
         divCount++;
       }
     }
@@ -128,18 +151,20 @@ export async function runGuardEvening(opts: { force?: boolean; asOf?: string } =
     // Fills at this session's open: sells first, then buys (cash-limited).
     const due = pending.filter((o) => o.status === "pending" && o.createdDate < d);
     for (const o of [...due.filter((x) => x.side === "sell"), ...due.filter((x) => x.side === "buy")]) {
-      const b = bars.get(o.code);
-      const i = b ? b.t.indexOf(d) : -1;
-      const sessionsWaited = bench.t.filter((x) => x > o.createdDate && x <= d).length;
-      if (!b || i < 0 || !(b.o[i] > 0)) {
-        if (sessionsWaited >= ORDER_EXPIRY_SESSIONS) {
+      const b = bars.get(o.code)!;
+      const i = b.t.indexOf(d);
+      if (i < 0 || !(b.o[i] > 0)) {
+        const waited = bench.t.filter((x) => x > o.createdDate && x <= d).length;
+        if (waited >= ORDER_EXPIRY_SESSIONS) {
           o.status = "expired";
-          await prisma.guardOrder.update({ where: { id: o.id }, data: { status: "expired" } });
+          writes.push(prisma.guardOrder.update({ where: { id: o.id }, data: { status: "expired" } }));
         }
         continue;
       }
       const px = b.o[i];
-      let shares = 0, realized: number | null = null, commission = 0;
+      let shares = 0;
+      let realized: number | null = null;
+      let commission = 0;
       if (o.side === "sell") {
         const have = holdings.get(o.code) ?? 0;
         shares = Math.min(have, o.shares);
@@ -164,12 +189,12 @@ export async function runGuardEvening(opts: { force?: boolean; asOf?: string } =
         }
       }
       o.status = "filled";
-      await prisma.$transaction([
-        prisma.guardOrder.update({ where: { id: o.id }, data: { status: "filled", fillDate: d, fillPrice: px } }),
-        ...(shares > 0
-          ? [prisma.guardTrade.create({ data: { date: d, code: o.code, side: o.side, shares, price: px, commission, realized, orderId: o.id } })]
-          : []),
-      ]);
+      writes.push(prisma.guardOrder.update({ where: { id: o.id }, data: { status: "filled", fillDate: d, fillPrice: px } }));
+      if (shares > 0) {
+        writes.push(
+          prisma.guardTrade.create({ data: { date: d, code: o.code, side: o.side, shares, price: px, commission, realized, orderId: o.id } }),
+        );
+      }
       fills++;
     }
   }
@@ -180,10 +205,25 @@ export async function runGuardEvening(opts: { force?: boolean; asOf?: string } =
     return b && b.c.length ? b.c[b.c.length - 1] : null;
   };
   let stockValue = 0;
-  for (const [code, sh] of holdings) stockValue += sh * (closeOf(code) ?? 0);
+  for (const [code, sh] of holdings) if (sh > 0) stockValue += sh * closeOf(code)!;
   const value = cash + stockValue;
   const exposure = updateGuard(gs, value, PARAMS);
   const currentExp = value > 0 ? stockValue / value : 0;
+
+  // Commit 1 — before the heavy universe pass.
+  await prisma.$transaction([
+    ...writes,
+    prisma.guardPosition.deleteMany({}),
+    prisma.guardPosition.createMany({
+      data: [...holdings].filter(([, sh]) => sh > 0).map(([code, shares]) => ({ code, shares, costBasis: basis.get(code) ?? 0 })),
+    }),
+    ...settingWrites([
+      ...settings,
+      ["guardCash", cash], ["guardLastDate", today], ["guardLastValue", value], ["guardRealizedYtd", realizedYtd],
+      ["guardYear", gs.year], ["guardYearStart", gs.startValue], ["guardFloor", gs.floor], ["guardHwm", gs.hwm],
+      ["guardLocked", gs.locked],
+    ]),
+  ]);
 
   // ---- monthly target refresh (first processed session of the month) ----
   const month = today.slice(0, 7);
@@ -191,10 +231,7 @@ export async function runGuardEvening(opts: { force?: boolean; asOf?: string } =
   let refreshed = false;
   const targetCloses = new Map<string, number>();
   if ((await getS("guardTargetsMonth")) !== month) {
-    const universe = await prisma.listedStock.findMany({
-      where: { financials: { some: {} } },
-      select: { code: true },
-    });
+    const universe = await prisma.listedStock.findMany({ where: { financials: { some: {} } }, select: { code: true } });
     const feats = await mapPool(universe.map((u) => u.code), 8, async (code) => {
       const b = await fetchGuardBars(code, "2y");
       if (!b || b.t[b.t.length - 1] !== today) return null; // must trade on the signal day
@@ -204,16 +241,13 @@ export async function runGuardEvening(opts: { force?: boolean; asOf?: string } =
       return { code, ...f };
     });
     const pool = feats.filter((x): x is NonNullable<typeof x> => x != null);
-    if (pool.length >= 50) {
-      targets = pickTargets(pool, 10);
-      refreshed = true;
-      await setS("guardTargets", JSON.stringify(targets));
-      await setS("guardTargetsMonth", month);
-    }
+    if (pool.length < 50) throw new Error(`銘柄データ不足(${pool.length}銘柄)のため月初の銘柄更新を中止`);
+    targets = pickTargets(pool, 10);
+    refreshed = true;
   }
 
   // ---- tonight's orders ----
-  let newOrders = 0;
+  const orderRows: Prisma.GuardOrderCreateManyInput[] = [];
   const stillPending = pending.some((o) => o.status === "pending");
   if (!stillPending && (refreshed || needsResize(exposure, currentExp, PARAMS))) {
     for (const code of targets) {
@@ -226,33 +260,25 @@ export async function runGuardEvening(opts: { force?: boolean; asOf?: string } =
     const reason = refreshed
       ? `月初の銘柄入替(株の目標比率 ${(exposure * 100).toFixed(0)}%)`
       : `比率調整 ${(currentExp * 100).toFixed(0)}% → ${(exposure * 100).toFixed(0)}%`;
-    if (orders.length > 0) {
-      await prisma.guardOrder.createMany({
-        data: orders.map((o) => ({ createdDate: today, code: o.code, side: o.side, shares: o.shares, refPrice: price(o.code) ?? 0, reason })),
-      });
-      newOrders = orders.length;
+    for (const o of orders) {
+      orderRows.push({ createdDate: today, code: o.code, side: o.side, shares: o.shares, refPrice: price(o.code) ?? 0, reason });
     }
   }
 
-  // ---- persist ----
+  // Commit 2 — targets, tonight's orders and the equity row (which marks the
+  // day as done for retries) together.
   await prisma.$transaction([
-    prisma.guardPosition.deleteMany({}),
-    prisma.guardPosition.createMany({
-      data: [...holdings].filter(([, sh]) => sh > 0).map(([code, shares]) => ({ code, shares, costBasis: basis.get(code) ?? 0 })),
-    }),
+    ...(refreshed ? settingWrites([["guardTargets", JSON.stringify(targets)], ["guardTargetsMonth", month]]) : []),
+    ...(orderRows.length ? [prisma.guardOrder.createMany({ data: orderRows })] : []),
     prisma.guardEquity.upsert({
       where: { date: today },
       create: { date: today, value, cash, stockValue, floor: gs.floor, exposure, locked: gs.locked },
       update: { value, cash, stockValue, floor: gs.floor, exposure, locked: gs.locked },
     }),
   ]);
-  for (const [k, v] of [
-    ["guardCash", cash], ["guardLastDate", today], ["guardLastValue", value], ["guardRealizedYtd", realizedYtd],
-    ["guardYear", gs.year], ["guardYearStart", gs.startValue], ["guardFloor", gs.floor], ["guardHwm", gs.hwm], ["guardLocked", gs.locked],
-  ] as const) await setS(k, v);
 
   return {
     date: today, session: true, note: "ok", value: Math.round(value), exposure, floor: Math.round(gs.floor),
-    fills, dividends: divCount, newOrders, refreshedTargets: refreshed,
+    fills, dividends: divCount, newOrders: orderRows.length, refreshedTargets: refreshed,
   };
 }

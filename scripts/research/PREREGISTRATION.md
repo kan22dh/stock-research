@@ -252,3 +252,25 @@ CPPI/TIPP mechanism (worst year ≈ exposure × the book's worst year). The live
 v2 account still runs the pre-registered default (L5 m4 TIPP) as the
 out-of-sample record; switching to a fixed mix after seeing this would be an
 outcome-driven choice and is left to the owner.
+
+## Round 3 CORRECTION (2026-11-04, same configs — a simulator defect, not new trials)
+Reconciling the simulator with the round-2 engine (scripts/research/reconcile-sim.ts,
+18a, tax 0) showed 18.8% vs 23.5%. Cause: on a target-refresh day the simulator
+set the new list AFTER recording that day's closes, so new entrants had no price
+and planOrders skipped them — the money stayed in cash (16% on average in the
+uncapped run). The live job was never affected (it fetches every target's close).
+After the fix: simulator 23.1% vs engine 23.5% (cash 0%). All round-3 figures
+re-run with the fix:
+
+| config | after-tax CAGR | worst full year | negative /17 | max DD (daily) | cash avg |
+|---|---|---|---|---|---|
+| DEFAULT L5 m4 TIPP | +2.8% | −4.2% | 3 | −6.0% | 86% |
+| fixed 13% (reference) | +2.5% | −2.7% | 2 | −6.2% | 88% |
+| fixed 20% (reference) | +4.0% | −4.4% | 2 | −10.2% | 80% |
+| 18a, no cap | +19.6% | −20.0% | 3 | −45.6% | 0% |
+| TOPIX 1306 | +10.6% | −18.9% | 5 | −33.2% | — |
+
+Conclusions unchanged: the loss budget holds (no TIPP config ended a year
+below −L; worst gap day −1.8%), it costs most of the return, and a fixed low
+stock share gives the same protection. "Never a losing year" was not achieved
+by any config (minimum 2/17 negative years).

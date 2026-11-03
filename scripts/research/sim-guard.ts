@@ -27,7 +27,7 @@ const DIR = path.join(__dirname, "..", "..", ".cache", "long2");
 const BENCH = "13060";
 const LO = 0.6, HI = 1.7;
 
-function load(): { stocks: S[]; bench: S } {
+export function load(): { stocks: S[]; bench: S } {
   const out: S[] = [];
   for (const f of fs.readdirSync(DIR)) {
     const r = JSON.parse(fs.readFileSync(path.join(DIR, f), "utf8"));
@@ -66,7 +66,7 @@ function load(): { stocks: S[]; bench: S } {
 // Monthly target lists (independent of the guard config → computed once).
 // Refreshed on the close of each month's FIRST session: the live evening job
 // can tell "first session of the month" on the day, but not "last session".
-function monthlyTargets(stocks: S[], days: string[]): Map<string, string[]> {
+export function monthlyTargets(stocks: S[], days: string[]): Map<string, string[]> {
   const out = new Map<string, string[]>();
   for (let k = 0; k < days.length; k++) {
     const d = days[k];
@@ -88,7 +88,7 @@ function monthlyTargets(stocks: S[], days: string[]): Map<string, string[]> {
 // fixedExposure: reference rows only (not trials) — a constant stock share,
 // resized when it drifts beyond the band. Answers "does the guard protect
 // anything a plain low-exposure mix wouldn't?".
-export type SimConfig = GuardParams & { label: string; capital: number; commission: number; overlay: boolean; fixedExposure?: number };
+export type SimConfig = GuardParams & { label: string; capital: number; commission: number; overlay: boolean; fixedExposure?: number; taxRate?: number; resizeTol?: number };
 export type YearRow = { year: number; ret: number; startValue: number; endValue: number; taxPaid: number; locked: boolean };
 
 export function simulate(cfg: SimConfig, data: { stocks: S[]; bench: S; days: string[]; targets: Map<string, string[]> }) {
@@ -122,8 +122,8 @@ export function simulate(cfg: SimConfig, data: { stocks: S[]; bench: S; days: st
       for (const [exd, amt] of s.divs) {
         if (exd === d) {
           const gross = sh * amt;
-          cash += gross * (1 - TAX_RATE);
-          taxYtd += gross * TAX_RATE;
+          cash += gross * (1 - (cfg.taxRate ?? TAX_RATE));
+          taxYtd += gross * (cfg.taxRate ?? TAX_RATE);
         }
       }
     }
@@ -181,7 +181,7 @@ export function simulate(cfg: SimConfig, data: { stocks: S[]; bench: S; days: st
     // 4) year end: settle capital-gains tax on the year's net realised gain
     const yearEnd = k === data.days.length - 1 || data.days[k + 1].slice(0, 4) !== d.slice(0, 4);
     if (yearEnd) {
-      const cgt = Math.max(0, realizedYtd) * TAX_RATE;
+      const cgt = Math.max(0, realizedYtd) * (cfg.taxRate ?? TAX_RATE);
       cash -= cgt;
       value -= cgt;
       years.push({ year: y, ret: value / gs.startValue - 1, startValue: gs.startValue, endValue: value, taxPaid: taxYtd + cgt, locked: gs.locked });
@@ -200,12 +200,25 @@ export function simulate(cfg: SimConfig, data: { stocks: S[]; bench: S; days: st
     const currentExp = value > 0 ? stockValue / value : 0;
     const newList = data.targets.get(d);
     let replan = false;
-    if (newList) { targets = newList; replan = true; }
+    if (newList) {
+      targets = newList;
+      replan = true;
+      // New entrants need today's close for sizing. (Bug fixed 2026-11-04:
+      // they were priced only from the NEXT day on, so on the refresh day
+      // planOrders skipped them and the money sat in cash — 16% on average
+      // in the uncapped run. The live job always had their closes.)
+      for (const code of newList) {
+        const s = byCode.get(code);
+        const i = s?.idx.get(d);
+        if (s && i != null) lastClose.set(code, s.c[i]);
+      }
+    }
     if ((cfg.overlay || cfg.fixedExposure != null) && needsResize(exposure, currentExp, cfg)) replan = true;
     if (replan && pending.length === 0) {
       const { orders, unbuyable } = planOrders({
         value, exposure, targets, holdings,
         price: (code) => lastClose.get(code) ?? null,
+        resizeTol: cfg.resizeTol,
       });
       if (orders.length > 0) { orderDays++; rebalanceEvents++; }
       unbuyableCount += unbuyable.length;
