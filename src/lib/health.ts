@@ -13,10 +13,11 @@ const JST_OFFSET_MS = 9 * 3600 * 1000;
 const RUN_HOUR_JST = 7;
 const GRACE_MS = 90 * 60 * 1000; // cron start jitter + up to 5 min runtime
 
-// Most recent scheduled run time (Mon–Fri 07:00 JST) at or before `now`.
-export function lastScheduledRun(now = new Date()): Date {
+// Most recent scheduled run time (Mon–Fri hourJst:00 JST) at or before `now`.
+// Default = the 07:00 morning cron; the v2 guard job runs at 17:00.
+export function lastScheduledRun(now = new Date(), hourJst = RUN_HOUR_JST): Date {
   const jst = new Date(now.getTime() + JST_OFFSET_MS);
-  const d = new Date(Date.UTC(jst.getUTCFullYear(), jst.getUTCMonth(), jst.getUTCDate(), RUN_HOUR_JST));
+  const d = new Date(Date.UTC(jst.getUTCFullYear(), jst.getUTCMonth(), jst.getUTCDate(), hourJst));
   // d is "07:00 on the JST calendar day", expressed in shifted-UTC space.
   if (d.getTime() > jst.getTime()) d.setUTCDate(d.getUTCDate() - 1);
   while (d.getUTCDay() === 0 || d.getUTCDay() === 6) d.setUTCDate(d.getUTCDate() - 1);
@@ -93,6 +94,25 @@ export async function computeHealth(now = new Date()): Promise<Health> {
     ok: !!equity && equity.date >= expectedJstDate,
     detail: `仮想口座の最終評価日 ${equity?.date ?? "なし"}`,
   });
+
+  // v2 guard account: evening job, Mon–Fri 17:00–17:59 JST (Vercel Hobby
+  // fires anywhere within the hour). Judged against its own slot, and not
+  // required before the account's first run exists.
+  const GUARD_HOUR = 17;
+  const gSlot = lastScheduledRun(now, GUARD_HOUR);
+  const gMustAfter =
+    now.getTime() - gSlot.getTime() < GRACE_MS ? lastScheduledRun(new Date(gSlot.getTime() - 60_000), GUARD_HOUR) : gSlot;
+  const [gLastOk, gAny] = await Promise.all([
+    prisma.cronRun.findFirst({ where: { job: "guard-evening", ok: true }, orderBy: { startedAt: "desc" }, select: { startedAt: true } }),
+    prisma.cronRun.findFirst({ where: { job: "guard-evening" }, select: { id: true } }),
+  ]);
+  if (gAny) {
+    checks.push({
+      name: "guard",
+      ok: !!gLastOk && gLastOk.startedAt >= new Date(gMustAfter.getTime() - 30 * 60 * 1000),
+      detail: `v2夕方ジョブ 最終成功 ${fmtJst(gLastOk?.startedAt)}(予定 ${fmtJst(gMustAfter)} 以降)`,
+    });
+  }
 
   return {
     ok: checks.every((c) => c.ok),

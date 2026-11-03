@@ -1,21 +1,25 @@
 # Data-pipeline watchdog. Added after the 2026-08-12 → 10-02 outage: the
 # Vercel cron was dead for 7 weeks and the only signal was an on-page badge
-# nobody was looking at. This runs every weekday at 08:30 JST (after the
-# 07:00 cron + grace), asks /api/health, and if unhealthy re-triggers the
-# cron once (it is idempotent) before re-checking. If it is still unhealthy
-# the job fails, and GitHub emails the repo owner automatically.
-# Cost: ~1 Actions minute per run (free tier).
+# nobody was looking at. Runs on weekdays at 08:30 JST (after the 07:00
+# morning cron) and 19:00 JST (after the 17:00–17:59 v2 guard job), asks
+# /api/health, and if unhealthy re-triggers the failing job once (both are
+# idempotent) before re-checking. If still unhealthy the job fails, and
+# GitHub emails the repo owner automatically.
+# Cost: ~1 Actions minute per run (public repo → free).
+# NOTE: GitHub disables scheduled workflows in public repos after 60 days
+# without repository activity — that would silence this watchdog too.
 name: watchdog
 
 on:
   schedule:
     - cron: "30 23 * * 0-4" # UTC Sun–Thu 23:30 = JST Mon–Fri 08:30
+    - cron: "0 10 * * 1-5" # UTC Mon–Fri 10:00 = JST Mon–Fri 19:00
   workflow_dispatch: {}
 
 jobs:
   health:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 12
     env:
       SITE: https://stock-research-delta.vercel.app
     steps:
@@ -27,9 +31,17 @@ jobs:
           echo "first check: HTTP $code"; cat health.json || true; echo
           if [ "$code" = "200" ]; then exit 0; fi
 
-          echo "unhealthy → re-running the daily cron once"
-          curl -sS --max-time 300 -o refresh.json -w "refresh HTTP %{http_code}\n" "$SITE/api/daily-refresh?force=1" || true
-          cat refresh.json || true; echo
+          # Retry only the job(s) whose checks failed.
+          if grep -q '"name":"guard","ok":false' health.json; then
+            echo "guard job unhealthy → re-running /api/guard-evening once"
+            curl -sS --max-time 300 -o guard.json -w "guard HTTP %{http_code}\n" "$SITE/api/guard-evening" || true
+            cat guard.json || true; echo
+          fi
+          if grep -Eq '"name":"(cron|momentum|benchmark|paper)","ok":false' health.json || ! grep -q '"checks"' health.json; then
+            echo "morning pipeline unhealthy → re-running /api/daily-refresh once"
+            curl -sS --max-time 300 -o refresh.json -w "refresh HTTP %{http_code}\n" "$SITE/api/daily-refresh?force=1" || true
+            cat refresh.json || true; echo
+          fi
 
           code=$(check)
           echo "second check: HTTP $code"; cat health.json || true; echo

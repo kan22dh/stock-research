@@ -301,3 +301,69 @@ model CronRun {
 
   @@index([job, startedAt])
 }
+
+// ---- v2「年間損失上限型」paper account (2026-11) ----
+// Separate tables so v1 (PaperPosition/PaperTrade/PaperEquity), the control
+// record, is never touched. Logic: src/lib/guard-core.ts (shared with the
+// research simulator) + src/lib/guard-account.ts (evening job). Scalar state
+// (cash, year floor, HWM, realised P&L) lives in AppSetting under "guard*".
+model GuardPosition {
+  code      String @id
+  shares    Int
+  costBasis Float // total yen paid incl. commission, for 特定口座 P&L
+}
+
+// Orders are created on a trading day's evening and fill at the OPEN of the
+// first later session that has an open (S株 前場始値). "pending" until then;
+// "expired" after 5 sessions without an open.
+model GuardOrder {
+  id          Int      @id @default(autoincrement())
+  createdDate String   // JST trading date of the signal (YYYY-MM-DD)
+  code        String
+  side        String   // "buy" | "sell"
+  shares      Int
+  refPrice    Float    // signal-day close, for the instruction sheet
+  reason      String
+  status      String   @default("pending") // pending | filled | expired
+  fillDate    String?
+  fillPrice   Float?
+  createdAt   DateTime @default(now())
+
+  @@index([status])
+  @@index([createdDate])
+}
+
+model GuardTrade {
+  id         Int    @id @default(autoincrement())
+  date       String
+  code       String
+  side       String
+  shares     Int
+  price      Float
+  commission Float
+  realized   Float? // sell only, before tax
+  orderId    Int    @unique // one fill per order (idempotency under retries)
+
+  @@index([date])
+}
+
+// One credit per (code, ex-date) — idempotent under watchdog retries.
+model GuardDividend {
+  code   String
+  exDate String
+  shares Int
+  gross  Float
+  tax    Float
+
+  @@id([code, exDate])
+}
+
+model GuardEquity {
+  date       String @id // JST trading date
+  value      Float
+  cash       Float
+  stockValue Float
+  floor      Float
+  exposure   Float  // target exposure decided this evening
+  locked     Boolean
+}

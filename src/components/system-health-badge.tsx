@@ -31,6 +31,7 @@ export async function SystemHealthBadge() {
     momentum: "株価モメンタム",
     benchmark: "TOPIX(比較基準)",
     paper: "仮想口座の評価",
+    guard: "v2夕方ジョブ",
   };
   const failing = health.checks.filter((c) => !c.ok);
 
