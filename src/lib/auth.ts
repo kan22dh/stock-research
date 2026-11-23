@@ -17,6 +17,7 @@
 //
 // Fail-closed: in production, missing env vars mean nobody gets in. In
 // `next dev` with nothing configured, everything is allowed.
+import { createHash } from "node:crypto";
 import { headers } from "next/headers";
 
 function safeEqual(a: string, b: string): boolean {
@@ -71,4 +72,20 @@ export function requireAuth(req: Request): Response | null {
 export async function assertAuthorized(): Promise<void> {
   const h = await headers();
   if (!isAuthorized(h.get("authorization"))) throw new Error("unauthorized");
+}
+
+/**
+ * Public, value-free view of the auth config for /api/health: which variables
+ * are present, plus a 6-hex fingerprint of CRON_SECRET (sha256 prefix) so a
+ * mismatch with the local copy can be told apart from a missing variable.
+ */
+export function authConfigSummary() {
+  const secret = env("CRON_SECRET");
+  return {
+    cronSecret: Boolean(secret),
+    cronSecretFingerprint: secret
+      ? createHash("sha256").update(secret).digest("hex").slice(0, 6)
+      : null,
+    basicAuth: Boolean(env("BASIC_AUTH_USER") && env("BASIC_AUTH_PASSWORD")),
+  };
 }

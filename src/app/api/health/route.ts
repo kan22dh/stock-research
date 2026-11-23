@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { computeHealth } from "@/lib/health";
+import { authConfigSummary } from "@/lib/auth";
 
 // Polled by .github/workflows/watchdog.yml. Non-200 → the workflow run fails
 // → GitHub emails the repo owner. That is the whole alerting system, and it
@@ -9,7 +10,10 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   try {
     const health = await computeHealth();
-    return NextResponse.json(health, { status: health.ok ? 200 : 503 });
+    return NextResponse.json(
+      { ...health, auth: authConfigSummary() },
+      { status: health.ok ? 200 : 503 },
+    );
   } catch (e) {
     // DB unreachable (quota, outage) is the most important case to report.
     return NextResponse.json(
