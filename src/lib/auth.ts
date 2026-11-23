@@ -26,10 +26,15 @@ function safeEqual(a: string, b: string): boolean {
   return diff === 0;
 }
 
+// Trim: values pasted into the Vercel dashboard often carry a trailing space/newline.
+function env(name: string): string | undefined {
+  return process.env[name]?.trim() || undefined;
+}
+
 function configured(): boolean {
   return Boolean(
-    process.env.CRON_SECRET ||
-      (process.env.BASIC_AUTH_USER && process.env.BASIC_AUTH_PASSWORD),
+    env("CRON_SECRET") ||
+      (env("BASIC_AUTH_USER") && env("BASIC_AUTH_PASSWORD")),
   );
 }
 
@@ -37,13 +42,13 @@ export function isAuthorized(authorization: string | null): boolean {
   if (!configured()) return process.env.NODE_ENV === "development";
   if (!authorization) return false;
 
-  const secret = process.env.CRON_SECRET;
+  const secret = env("CRON_SECRET");
   if (secret && authorization.startsWith("Bearer ")) {
-    return safeEqual(authorization.slice(7), secret);
+    return safeEqual(authorization.slice(7).trim(), secret);
   }
 
-  const user = process.env.BASIC_AUTH_USER;
-  const pass = process.env.BASIC_AUTH_PASSWORD;
+  const user = env("BASIC_AUTH_USER");
+  const pass = env("BASIC_AUTH_PASSWORD");
   if (user && pass && authorization.startsWith("Basic ")) {
     let decoded: string;
     try {
