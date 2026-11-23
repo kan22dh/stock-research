@@ -1,3 +1,4 @@
+import { requireAuth } from "@/lib/auth";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { syncMomentumBatch } from "@/lib/momentum-sync";
@@ -9,6 +10,8 @@ export const maxDuration = 300; // up to 5 min
 const BATCH_DELAY_MS = 150;
 
 export async function POST(req: Request) {
+  const denied = requireAuth(req);
+  if (denied) return denied;
   const url = new URL(req.url);
   const limit = Math.min(Number(url.searchParams.get("limit") ?? "200"), 1000);
   const scaleParam = url.searchParams.get("scale") ?? "financials";

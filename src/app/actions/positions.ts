@@ -1,9 +1,11 @@
 "use server";
 
+import { assertAuthorized } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
 
 export async function createPosition(formData: FormData): Promise<{ error?: string }> {
+  await assertAuthorized();
   const code = String(formData.get("code") ?? "").trim();
   const shares = Number(formData.get("shares"));
   const entryPrice = Number(formData.get("entryPrice"));
@@ -49,6 +51,7 @@ export async function createPosition(formData: FormData): Promise<{ error?: stri
 }
 
 export async function closePosition(formData: FormData): Promise<{ error?: string }> {
+  await assertAuthorized();
   const id = Number(formData.get("id"));
   const closePrice = Number(formData.get("closePrice"));
   const reason = String(formData.get("reason") ?? "").trim();
@@ -75,6 +78,7 @@ export async function closePosition(formData: FormData): Promise<{ error?: strin
 }
 
 export async function updateStopLoss(formData: FormData): Promise<{ error?: string }> {
+  await assertAuthorized();
   const id = Number(formData.get("id"));
   const stopLossPrice = Number(formData.get("stopLossPrice"));
   if (!Number.isFinite(id)) return { error: "不正なIDです" };
@@ -87,6 +91,7 @@ export async function updateStopLoss(formData: FormData): Promise<{ error?: stri
 }
 
 export async function addJournalNote(formData: FormData): Promise<{ error?: string }> {
+  await assertAuthorized();
   const positionId = Number(formData.get("positionId"));
   const reason = String(formData.get("reason") ?? "").trim();
   if (!Number.isFinite(positionId) || !reason) {
@@ -100,6 +105,7 @@ export async function addJournalNote(formData: FormData): Promise<{ error?: stri
 }
 
 export async function updateCashBalance(formData: FormData): Promise<{ error?: string }> {
+  await assertAuthorized();
   const cashBalance = Number(formData.get("cashBalance"));
   if (!Number.isFinite(cashBalance) || cashBalance < 0) {
     return { error: "現金残高が不正です" };

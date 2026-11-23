@@ -1,5 +1,6 @@
 "use server";
 
+import { assertAuthorized } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import { syncFinancialsIfStale } from "@/lib/sync";
 
@@ -9,6 +10,7 @@ export async function syncPeersFinancials(
   codes: string[],
   options: { selfCode?: string } = {},
 ): Promise<{ requested: number; synced: number; failed: number }> {
+  await assertAuthorized();
   let synced = 0;
   let failed = 0;
   for (const code of codes) {

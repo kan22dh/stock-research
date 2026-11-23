@@ -22,6 +22,7 @@ jobs:
     timeout-minutes: 12
     env:
       SITE: https://stock-research-delta.vercel.app
+      CRON_SECRET: ${{ secrets.CRON_SECRET }}
     steps:
       - name: Check health (self-heal once)
         run: |
@@ -34,12 +35,12 @@ jobs:
           # Retry only the job(s) whose checks failed.
           if grep -q '"name":"guard","ok":false' health.json; then
             echo "guard job unhealthy → re-running /api/guard-evening once"
-            curl -sS --max-time 300 -o guard.json -w "guard HTTP %{http_code}\n" "$SITE/api/guard-evening" || true
+            curl -sS --max-time 300 -H "Authorization: Bearer $CRON_SECRET" -o guard.json -w "guard HTTP %{http_code}\n" "$SITE/api/guard-evening" || true
             cat guard.json || true; echo
           fi
           if grep -Eq '"name":"(cron|momentum|benchmark|paper)","ok":false' health.json || ! grep -q '"checks"' health.json; then
             echo "morning pipeline unhealthy → re-running /api/daily-refresh once"
-            curl -sS --max-time 300 -o refresh.json -w "refresh HTTP %{http_code}\n" "$SITE/api/daily-refresh?force=1" || true
+            curl -sS --max-time 300 -H "Authorization: Bearer $CRON_SECRET" -o refresh.json -w "refresh HTTP %{http_code}\n" "$SITE/api/daily-refresh?force=1" || true
             cat refresh.json || true; echo
           fi
 

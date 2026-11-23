@@ -1,9 +1,11 @@
 "use server";
 
+import { assertAuthorized } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
 
 export async function toggleWatch(code: string, note?: string): Promise<{ watched: boolean }> {
+  await assertAuthorized();
   const existing = await prisma.watchlist.findUnique({ where: { code } });
   if (existing) {
     await prisma.watchlist.delete({ where: { code } });

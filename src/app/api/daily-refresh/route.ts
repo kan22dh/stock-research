@@ -1,3 +1,4 @@
+import { requireAuth } from "@/lib/auth";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { syncMomentumBatchConcurrent } from "@/lib/momentum-sync";
@@ -73,9 +74,13 @@ async function run(req: Request) {
 }
 
 export async function GET(req: Request) {
+  const denied = requireAuth(req);
+  if (denied) return denied;
   return run(req);
 }
 
 export async function POST(req: Request) {
+  const denied = requireAuth(req);
+  if (denied) return denied;
   return run(req);
 }

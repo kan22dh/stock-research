@@ -1,5 +1,6 @@
 "use server";
 
+import { assertAuthorized } from "@/lib/auth";
 import Anthropic from "@anthropic-ai/sdk";
 import { prisma } from "@/lib/db";
 import { isAiEnabled } from "@/lib/ai";
@@ -11,6 +12,7 @@ export type CompareAiResult =
   | { ok: false; reason: "no-key" | "no-data" | "error"; message?: string };
 
 export async function compareWithAi(codes: string[]): Promise<CompareAiResult> {
+  await assertAuthorized();
   if (!isAiEnabled()) return { ok: false, reason: "no-key" };
   if (codes.length !== 2) {
     return { ok: false, reason: "no-data", message: "2銘柄を指定してください" };

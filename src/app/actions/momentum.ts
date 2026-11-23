@@ -1,5 +1,6 @@
 "use server";
 
+import { assertAuthorized } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
 import { syncMomentumBatch } from "@/lib/momentum-sync";
@@ -11,6 +12,7 @@ export async function bulkSyncMomentum(): Promise<{
   synced: number;
   failed: number;
 }> {
+  await assertAuthorized();
   const stocks = await prisma.listedStock.findMany({
     where: { financials: { some: {} } },
     select: { code: true },

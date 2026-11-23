@@ -1,5 +1,6 @@
 "use server";
 
+import { assertAuthorized } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
 import { syncFinancialsIfStale } from "@/lib/sync";
@@ -11,6 +12,7 @@ const BATCH_DELAY_MS = 6000; // J-Quants free plan rate-limits aggressively (~10
 export async function bulkSyncFinancials(
   codes?: string[],
 ): Promise<{ requested: number; synced: number; failed: number }> {
+  await assertAuthorized();
   let targetCodes: string[];
   if (codes && codes.length > 0) {
     targetCodes = codes;

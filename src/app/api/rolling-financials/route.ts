@@ -1,3 +1,4 @@
+import { requireAuth } from "@/lib/auth";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { syncFinancialsIfStale } from "@/lib/sync";
@@ -49,10 +50,14 @@ async function runBatch() {
   return { requested: stale.length, synced, failed };
 }
 
-export async function GET() {
+export async function GET(req: Request) {
+  const denied = requireAuth(req);
+  if (denied) return denied;
   return run();
 }
 
-export async function POST() {
+export async function POST(req: Request) {
+  const denied = requireAuth(req);
+  if (denied) return denied;
   return run();
 }

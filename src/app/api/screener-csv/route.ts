@@ -1,8 +1,11 @@
+import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 
 const SMALL_SCALES = ["TOPIX Small 1", "TOPIX Small 2"];
 
 export async function GET(req: Request) {
+  const denied = requireAuth(req);
+  if (denied) return denied;
   const url = new URL(req.url);
   const minGrowth = url.searchParams.get("growth")
     ? Number(url.searchParams.get("growth"))

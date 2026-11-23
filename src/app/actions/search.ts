@@ -1,5 +1,6 @@
 "use server";
 
+import { assertAuthorized } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { syncListedInfoIfStale } from "@/lib/sync";
 
@@ -13,6 +14,7 @@ export type StockSearchResult = {
 };
 
 export async function searchStocks(query: string): Promise<StockSearchResult[]> {
+  await assertAuthorized();
   const q = query.trim();
   if (q.length === 0) return [];
 

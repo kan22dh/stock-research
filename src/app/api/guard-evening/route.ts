@@ -1,3 +1,4 @@
+import { requireAuth } from "@/lib/auth";
 import { NextResponse } from "next/server";
 import { runGuardEvening } from "@/lib/guard-account";
 import { runStage, startCronRun, finishCronRun, type StageResult } from "@/lib/cron-run";
@@ -19,8 +20,12 @@ async function run(req: Request) {
 }
 
 export async function GET(req: Request) {
+  const denied = requireAuth(req);
+  if (denied) return denied;
   return run(req);
 }
 export async function POST(req: Request) {
+  const denied = requireAuth(req);
+  if (denied) return denied;
   return run(req);
 }

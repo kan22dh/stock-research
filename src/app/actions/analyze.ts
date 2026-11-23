@@ -1,5 +1,6 @@
 "use server";
 
+import { assertAuthorized } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { analyzeStock, isAiEnabled, type StockContext } from "@/lib/ai";
 import { fetchAllMacroSeries, latestValue } from "@/lib/fred";
@@ -9,6 +10,7 @@ export type AnalyzeResult =
   | { ok: false; reason: "no-key" | "no-data" | "error"; message?: string };
 
 export async function analyzeStockAction(code: string): Promise<AnalyzeResult> {
+  await assertAuthorized();
   if (!isAiEnabled()) {
     return { ok: false, reason: "no-key" };
   }
